@@ -2,11 +2,12 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/jackc/pgx/v5/pgxpool"
+	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/everestp/depin-backend/services"
 )
@@ -15,14 +16,15 @@ import (
 func StartResultProcessor(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	rabbitConn *amqp.Connection, // Change parameter from rabbitCh *amqp.Channel to the connection handle
-	pingLogSvc services.PingLogService,
-	rewardSvc services.RewardService,
+	rabbitConn *amqp.Connection,
+	pingLogSvc services.PingLogService, // Using your official interface patterns
+	rewardSvc services.RewardService,   // Using your official interface patterns
 ) {
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
+				log.Println("[worker-processor] Context canceled. Stopping result processor background worker.")
 				return
 			default:
 				log.Println("[worker-processor] Spawning fresh results pipeline worker channel stream...")
@@ -34,20 +36,22 @@ func StartResultProcessor(
 					continue
 				}
 
-				// Enforce fair dispatch parameters
-				_ = ch.Qos(10, 0, false)
+				// Enforce fair dispatch parameters (prefetch count of 10 matches workload sizing)
+				if err := ch.Qos(10, 0, false); err != nil {
+					log.Printf("[worker-processor] Failed to set QoS parameters: %v", err)
+				}
 
 				msgs, err := ch.Consume(
 					"processing_queue",
 					"result-processor-worker",
-					false, // Manual Ack
-					false, // Exclusive
-					false, // No-local
-					false, // No-wait
+					false, // Manual Ack (Crucial to ensure data lands safely before deletion)
+					false,
+					false,
+					false,
 					nil,
 				)
 				if err != nil {
-					log.Printf("[worker-processor] Failed to register queue listener. Retrying: %v", err)
+					log.Printf("[worker-processor] Failed to register queue listener. Retrying in 5s: %v", err)
 					_ = ch.Close()
 					time.Sleep(5 * time.Second)
 					continue
@@ -65,6 +69,7 @@ func StartResultProcessor(
 	}()
 }
 
+// runConsumeLoop reads incoming packets, processes batches, and synchronizes settlements
 func runConsumeLoop(
 	ctx context.Context,
 	msgs <-chan amqp.Delivery,
@@ -80,13 +85,41 @@ func runConsumeLoop(
 				return amqp.ErrClosed
 			}
 
-			// Process your 369-byte payload safely here
-			log.Printf("[worker-processor] Received incoming job metric settlement payload (%d bytes)", len(msg.Body))
+			// 1. Decode the combined ResultPacket structural layout
+			var packet services.ResultPacket
+			if err := json.Unmarshal(msg.Body, &packet); err != nil {
+				log.Printf("[worker-processor] ❌ Failed to parse ResultPacket JSON: %v. Dropping corrupt message.", err)
+				_ = msg.Nack(false, false) // Drop without re-queueing corrupt syntax data
+				continue
+			}
 
-			// Replace with your internal payload processing or business layout parsing logic:
-			// e.g., err := pingLogSvc.SaveMetric(ctx, msg.Body)
+			log.Printf(
+				"[SETTLEMENT] Processing packet from Node: %s containing %d probe records.",
+				packet.RunnerPubkey,
+				len(packet.Results),
+			)
 
-			// Acknowledge processing status to flush item out of RabbitMQ storage
+			// 2. Route directly to your business logic layer
+			// ProcessPacket automatically inserts logs, resolves missing IDs, and subtracts monitor credit balances!
+			rewardDelta, err := pingLogSvc.ProcessPacket(ctx, &packet)
+			if err != nil {
+				log.Printf("[worker-processor] 🚨 Failed to complete ProcessPacket business flow: %v. Re-queueing work batch.", err)
+				_ = msg.Nack(false, true) // Re-queue to preserve database integrity
+				continue
+			}
+
+			// 3. Coordinate token settlement tracking if a reward delta was accumulated
+			if rewardDelta > 0 {
+				err = rewardSvc.AccumulateAndMaybeSync(ctx, packet.RunnerPubkey, rewardDelta)
+				if err != nil {
+					log.Printf("[worker-processor] ⚠️ Reward accumulation processing issue for %s: %v", packet.RunnerPubkey, err)
+					// We do not reject/re-queue here because the data has already successfully saved to your database inside ProcessPacket.
+				} else {
+					log.Printf("[SETTLEMENT] Successfully registered +%.4f token delta for Node: %s", rewardDelta, packet.RunnerPubkey)
+				}
+			}
+
+			// 4. Explicit Acknowledgment - Flush packet from queue
 			_ = msg.Ack(false)
 		}
 	}
