@@ -69,10 +69,19 @@ func New(cfg *env.Config) (*Application, error) {
 	// ── Repositories ───────────────────────────────────────────────────────
 	store := repositories.NewStorage(pool)
 
+	// ── In-Memory DePIN Registry & Intelligent Matcher Engine ──────────────
+	// ADDED: Thread-safe cache instances map live node connections without hitting Postgres
+	memRegistry := services.NewMemoryRegistry()
+	smartScheduler := services.NewSmartScheduler(memRegistry)
+
 	// ── Services ───────────────────────────────────────────────────────────
 	userSvc := services.NewUserService(store, cfg)
 	monitorSvc := services.NewMonitorService(store, rdb, rabbitCh, cfg)
-	runnerSvc := services.NewRunnerService(store, rdb, rabbitCh, cfg)
+
+	// CRITICAL CHANGE: Pass memRegistry into runnerSvc so when gRPC streams receive
+	// heartbeats, they update our live localized coordinate pool inside memRegistry.
+	runnerSvc := services.NewRunnerService(store, rdb, rabbitCh, cfg, memRegistry)
+
 	rewardSvc := services.NewRewardService(store, rabbitCh, cfg)
 	pingLogSvc := services.NewPingLogService(store, pool)
 
@@ -97,7 +106,9 @@ func New(cfg *env.Config) (*Application, error) {
 	grpcSrv := grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitConn)
 
 	// ── Background workers ─────────────────────────────────────────────────
-	workers.StartScheduler(ctx, rdb, pool, rabbitCh)
+	// CRITICAL CHANGE: We inject our new shared memory registry tracking instances
+	// directly into the background task distributor.
+	workers.StartScheduler(ctx, rdb, pool, rabbitCh, memRegistry, smartScheduler)
 	workers.StartResultProcessor(ctx, pool, rabbitConn, pingLogSvc, rewardSvc)
 	workers.StartSolanaSync(ctx, pool, rabbitCh, cfg)
 	workers.StartPartitionCron(ctx, pool)

@@ -20,14 +20,28 @@ type RunnerService interface {
 }
 
 type runnerService struct {
-	store    *repositories.Storage
-	rdb      *redis.Client
-	rabbitCh *amqp.Channel
-	cfg      *env.Config
+	store       *repositories.Storage
+	rdb         *redis.Client
+	rabbitCh    *amqp.Channel
+	cfg         *env.Config
+	memRegistry *MemoryRegistry // ADDED: Direct link to our real-time in-memory tracking pool
 }
 
-func NewRunnerService(store *repositories.Storage, rdb *redis.Client, rabbitCh *amqp.Channel, cfg *env.Config) RunnerService {
-	return &runnerService{store: store, rdb: rdb, rabbitCh: rabbitCh, cfg: cfg}
+// NewRunnerService matches the exact signature called by your app's main orchestration wireframe.
+func NewRunnerService(
+	store *repositories.Storage,
+	rdb *redis.Client,
+	rabbitCh *amqp.Channel,
+	cfg *env.Config,
+	memRegistry *MemoryRegistry, // ADDED
+) RunnerService {
+	return &runnerService{
+		store:       store,
+		rdb:         rdb,
+		rabbitCh:    rabbitCh,
+		cfg:         cfg,
+		memRegistry: memRegistry, // ADDED
+	}
 }
 
 func (s *runnerService) Register(ctx context.Context, email string, req *dto.RegisterRunnerRequest) (*dto.RunnerResponse, error) {
@@ -51,7 +65,22 @@ func (s *runnerService) GetByPubkey(ctx context.Context, pubkey string) (*dto.Ru
 }
 
 func (s *runnerService) Heartbeat(ctx context.Context, pubkey string) error {
-	return s.store.Runners.UpdateHeartbeat(ctx, pubkey)
+	// 1. Persist the database-backed timestamp update
+	err := s.store.Runners.UpdateHeartbeat(ctx, pubkey)
+	if err != nil {
+		return fmt.Errorf("update database heartbeat: %w", err)
+	}
+
+	// 2. Fetch node properties to extract coordinates and owner mappings
+	node, err := s.store.Runners.FindByPubkey(ctx, pubkey)
+	if err != nil {
+		return fmt.Errorf("resolve runner for memory allocation: %w", err)
+	}
+
+	// 3. Track state changes instantly inside our fast memory topology
+	s.memRegistry.TrackHeartbeat(node.OwnerPubkey, node.OwnerEmail, node.Latitude, node.Longitude)
+
+	return nil
 }
 
 func toRunnerResponse(n *repositories.RunnerNode) *dto.RunnerResponse {

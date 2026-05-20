@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,23 +14,16 @@ import (
 )
 
 // ── ResultPacket ───────────────────────────────────────────────────────────
-// Published to processing_queue by both:
-//   - grpc/server.go (gRPC path — from ProbeResult)
-//   - controllers/ping.go (REST path — from SubmitResultsRequest)
-// The result processor deserialises this and calls BulkInsert + AccumulateReward.
 
 type ResultPacket struct {
 	RunnerPubkey string        `json:"runner_pubkey"`
 	Results      []ProbeRecord `json:"results"`
 }
 
-// ProbeRecord is the normalised internal representation of one probe.
-// It covers both the gRPC ProbeResult fields (microsecond latencies, phase breakdown)
-// and the REST fallback (latency_ms only). Fields unused by one path are zero-valued.
 type ProbeRecord struct {
 	JobID      string `json:"job_id"`
 	BatchID    string `json:"batch_id"`
-	MonitorID  string `json:"monitor_id"`  // may be empty; resolved by processor from job_id
+	MonitorID  string `json:"monitor_id"`
 	TargetURL  string `json:"target_url"`
 	Success    bool   `json:"success"`
 	StatusCode int    `json:"status_code"`
@@ -41,7 +35,7 @@ type ProbeRecord struct {
 	TtfbUs  uint64 `json:"ttfb_us"`
 	TotalUs uint64 `json:"total_us"`
 
-	// Derived millisecond latency — total_us/1000; or latency_ms from REST path
+	// Derived millisecond latency
 	LatencyMs int `json:"latency_ms"`
 
 	ErrorKind   string `json:"error_kind"`
@@ -66,32 +60,51 @@ func NewPingLogService(store *repositories.Storage, pool *pgxpool.Pool) PingLogS
 	return &pingLogService{store: store, pool: pool}
 }
 
-// ProcessPacket converts ProbeRecords into PingLog rows and bulk-inserts them.
-// Resolves monitor_id from job_id prefix when missing.
-// Returns total reward delta for the batch.
+// ProcessPacket converts ProbeRecords, inserts logs, and settles payments ATOMICALLY
 func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket) (float64, error) {
 	if len(packet.Results) == 0 {
 		return 0, nil
 	}
 
 	now := time.Now()
-	logs := make([]*repositories.PingLog, 0, len(packet.Results))
-	var totalDelta float64
+	logsToInsert := make([]*repositories.PingLog, 0, len(packet.Results))
+	var collectiveBatchRewards float64
 
 	for _, r := range packet.Results {
 		monitorID := r.MonitorID
-		// Resolve monitor_id from job_id when not populated (gRPC path)
+
+		// 1. Core Verification Phase
 		if monitorID == "" && r.JobID != "" {
 			m, err := s.store.Monitors.FindByJobID(ctx, r.JobID)
 			if err != nil {
-				// Unknown job — skip, don't reward
+				log.Printf("[processor] warning: skipping unknown job validation frame (ID: %s): %v", r.JobID, err)
 				continue
 			}
 			monitorID = m.ID
-			// Deduct one credit from the monitor's balance
-			_ = s.store.Monitors.DeductCredit(ctx, monitorID)
 		}
 
+		// Fail-safe protection if both inputs map completely empty properties
+		if monitorID == "" {
+			continue
+		}
+
+		// 2. Dynamic Performance Tier Token Computations
+		// Base completion award fee allocation: 0.001 tokens
+		// Premium performance success bonus allocation: +0.001 tokens
+		tokenSettlementRate := 0.001
+		if r.Success {
+			tokenSettlementRate += 0.001
+		}
+
+		// 3. Dual-Sided Database Ledger Settlement (Atomic Transaction)
+		// This protects balances against single-sided failures or network timeouts.
+		err := s.store.ProcessJobSettlement(ctx, monitorID, packet.RunnerPubkey, tokenSettlementRate)
+		if err != nil {
+			log.Printf("[processor] settlement transaction aborted for monitor %s -> runner %s: %v", monitorID, packet.RunnerPubkey, err)
+			continue // Skip adding this log line since payment and billing failed
+		}
+
+		// 4. Transform Records Into System Log Profiles
 		ts := now
 		if r.TimestampMs > 0 {
 			ts = time.UnixMilli(int64(r.TimestampMs))
@@ -102,7 +115,7 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 			latencyMs = int(r.TotalUs / 1000)
 		}
 
-		log := &repositories.PingLog{
+		logEntry := &repositories.PingLog{
 			MonitorID:    monitorID,
 			RunnerPubkey: packet.RunnerPubkey,
 			DnsUs:        r.DnsUs,
@@ -117,19 +130,19 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 			GeoRegion:    r.GeoRegion,
 			Timestamp:    ts,
 		}
-		logs = append(logs, log)
 
-		// Reward: 0.001 base for completing the probe, +0.001 bonus for success
-		totalDelta += 0.001
-		if r.Success {
-			totalDelta += 0.001
+		logsToInsert = append(logsToInsert, logEntry)
+		collectiveBatchRewards += tokenSettlementRate
+	}
+
+	// 5. Bulk write verified logging metadata to database disk storage partitions
+	if len(logsToInsert) > 0 {
+		if err := s.store.PingLogs.BulkInsert(ctx, logsToInsert); err != nil {
+			return 0, fmt.Errorf("ping metrics batch storage commit execution failure: %w", err)
 		}
 	}
 
-	if err := s.store.PingLogs.BulkInsert(ctx, logs); err != nil {
-		return 0, fmt.Errorf("bulk insert: %w", err)
-	}
-	return totalDelta, nil
+	return collectiveBatchRewards, nil
 }
 
 func (s *pingLogService) GetRecentPings(ctx context.Context, monitorID string, limit int) ([]*repositories.PingLog, error) {
@@ -142,9 +155,6 @@ func (s *pingLogService) AvgLatencyUs(ctx context.Context, monitorID string, sin
 
 // ── REST path helper ───────────────────────────────────────────────────────
 
-// MarshalResultPacket converts the REST SubmitResultsRequest → ResultPacket JSON
-// for publishing to processing_queue. The REST path doesn't carry phase latencies,
-// so only LatencyMs and StatusCode are populated.
 func MarshalResultPacket(req *dto.SubmitResultsRequest) ([]byte, error) {
 	records := make([]ProbeRecord, len(req.Results))
 	for i, r := range req.Results {

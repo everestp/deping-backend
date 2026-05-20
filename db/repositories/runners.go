@@ -207,3 +207,34 @@ func (r *solanaSyncRepo) ExistsBySignature(ctx context.Context, txSignature stri
 		txSignature).Scan(&exists)
 	return exists, err
 }
+
+
+// ADD this method to your runnerRepo implementation:
+func (r *runnerRepo) FindByEmailAndPubkey(ctx context.Context, email, pubkey string) ([]*RunnerNode, error) {
+    const q = `
+        SELECT id, owner_email, owner_pubkey, region, latitude, longitude,
+               offchain_accumulated_tokens, total_earned_tokens_all_time,
+               pending_solana_sync, last_seen_timestamp
+        FROM runner_nodes
+        WHERE owner_email = $1 AND owner_pubkey = $2 AND deleted_at IS NULL
+        ORDER BY created_at DESC`
+
+    rows, err := r.pool.Query(ctx, q, email, pubkey)
+    if err != nil {
+        return nil, fmt.Errorf("runnerRepo.FindByEmailAndPubkey: %w", err)
+    }
+    defer rows.Close()
+
+    var result []*RunnerNode
+    for rows.Next() {
+        n := &RunnerNode{}
+        err := rows.Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.Region, &n.Latitude, &n.Longitude,
+            &n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
+            &n.PendingSolanaSync, &n.LastSeenTimestamp)
+        if err != nil {
+            return nil, err
+        }
+        result = append(result, n)
+    }
+    return result, rows.Err()
+}

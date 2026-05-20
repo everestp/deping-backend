@@ -85,13 +85,14 @@ func (r *monitorRepo) UpdateActive(ctx context.Context, id string, isActive bool
 	return err
 }
 
-func (r *monitorRepo) DeductCredit(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE monitors SET credit_balance_checks = credit_balance_checks - 1,
-		 total_spent_tokens = total_spent_tokens + 0.001
-		 WHERE id = $1 AND credit_balance_checks > 0`,
-		id)
-	return err
+
+func (r *monitorRepo) DeductCredit(ctx context.Context, id string, tokenCost float64) error {
+    _, err := r.pool.Exec(ctx,
+        `UPDATE monitors SET credit_balance_checks = credit_balance_checks - 1,
+         total_spent_tokens = total_spent_tokens + $1
+         WHERE id = $2 AND credit_balance_checks > 0 AND deleted_at IS NULL`,
+        tokenCost, id)
+    return err
 }
 
 func (r *monitorRepo) Delete(ctx context.Context, id string, ownerID int) error {
