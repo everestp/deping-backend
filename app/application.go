@@ -20,9 +20,9 @@ import (
 	"github.com/everestp/depin-backend/controllers"
 	"github.com/everestp/depin-backend/db/repositories"
 	grpcserver "github.com/everestp/depin-backend/grpc"
+	"github.com/everestp/depin-backend/router"
 	"github.com/everestp/depin-backend/services"
 	"github.com/everestp/depin-backend/workers"
-	"github.com/everestp/depin-backend/router"
 )
 
 type Application struct {
@@ -49,10 +49,12 @@ func New(cfg *env.Config) (*Application, error) {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 
+	// ── RabbitMQ Parent Connection Setup ───────────────────────────────────
 	rabbitConn, err := amqp.Dial(cfg.RabbitMQURL)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq dial: %w", err)
 	}
+
 	rabbitCh, err := rabbitConn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq channel: %w", err)
@@ -68,18 +70,18 @@ func New(cfg *env.Config) (*Application, error) {
 	store := repositories.NewStorage(pool)
 
 	// ── Services ───────────────────────────────────────────────────────────
-	userSvc    := services.NewUserService(store, cfg)
+	userSvc := services.NewUserService(store, cfg)
 	monitorSvc := services.NewMonitorService(store, rdb, rabbitCh, cfg)
-	runnerSvc  := services.NewRunnerService(store, rdb, rabbitCh, cfg)
-	rewardSvc  := services.NewRewardService(store, rabbitCh, cfg)
+	runnerSvc := services.NewRunnerService(store, rdb, rabbitCh, cfg)
+	rewardSvc := services.NewRewardService(store, rabbitCh, cfg)
 	pingLogSvc := services.NewPingLogService(store, pool)
 
 	// ── Controllers ────────────────────────────────────────────────────────
-	userCtrl    := controllers.NewUserController(userSvc)
+	userCtrl := controllers.NewUserController(userSvc)
 	monitorCtrl := controllers.NewMonitorController(monitorSvc)
-	runnerCtrl  := controllers.NewRunnerController(runnerSvc)
-	rewardCtrl  := controllers.NewRewardController(rewardSvc)
-	pingCtrl    := controllers.NewPingController(pingLogSvc, rabbitCh, validator)
+	runnerCtrl := controllers.NewRunnerController(runnerSvc)
+	rewardCtrl := controllers.NewRewardController(rewardSvc)
+	pingCtrl := controllers.NewPingController(pingLogSvc, rabbitCh, validator)
 
 	// ── HTTP ───────────────────────────────────────────────────────────────
 	r := router.New(cfg, userCtrl, monitorCtrl, runnerCtrl, rewardCtrl, pingCtrl)
@@ -91,12 +93,12 @@ func New(cfg *env.Config) (*Application, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// ── gRPC — now wired with validator + rabbitCh ─────────────────────────
-	grpcSrv := grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitCh)
+	// ── gRPC — Wired with parent rabbitConn instead of static channel ──────
+	grpcSrv := grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitConn)
 
 	// ── Background workers ─────────────────────────────────────────────────
 	workers.StartScheduler(ctx, rdb, pool, rabbitCh)
-	workers.StartResultProcessor(ctx, pool, rabbitCh, pingLogSvc, rewardSvc)
+	workers.StartResultProcessor(ctx, pool, rabbitConn, pingLogSvc, rewardSvc)
 	workers.StartSolanaSync(ctx, pool, rabbitCh, cfg)
 	workers.StartPartitionCron(ctx, pool)
 
