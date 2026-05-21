@@ -12,13 +12,12 @@ import (
 	"github.com/everestp/depin-backend/services"
 )
 
-// StartResultProcessor boots up an isolated, resilient worker consumer loop
 func StartResultProcessor(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	rabbitConn *amqp.Connection,
-	pingLogSvc services.PingLogService, // Using your official interface patterns
-	rewardSvc services.RewardService,   // Using your official interface patterns
+	pingLogSvc services.PingLogService,
+	rewardSvc services.RewardService,
 ) {
 	go func() {
 		for {
@@ -36,7 +35,6 @@ func StartResultProcessor(
 					continue
 				}
 
-				// Enforce fair dispatch parameters (prefetch count of 10 matches workload sizing)
 				if err := ch.Qos(10, 0, false); err != nil {
 					log.Printf("[worker-processor] Failed to set QoS parameters: %v", err)
 				}
@@ -44,7 +42,7 @@ func StartResultProcessor(
 				msgs, err := ch.Consume(
 					"processing_queue",
 					"result-processor-worker",
-					false, // Manual Ack (Crucial to ensure data lands safely before deletion)
+					false, // Manual Ack
 					false,
 					false,
 					false,
@@ -57,7 +55,6 @@ func StartResultProcessor(
 					continue
 				}
 
-				// Run internal processing loop until channel context drops out
 				err = runConsumeLoop(ctx, msgs, pingLogSvc, rewardSvc)
 				if err != nil {
 					log.Printf("[worker-processor] Stream connection severed: %v. Re-establishing...", err)
@@ -69,7 +66,6 @@ func StartResultProcessor(
 	}()
 }
 
-// runConsumeLoop reads incoming packets, processes batches, and synchronizes settlements
 func runConsumeLoop(
 	ctx context.Context,
 	msgs <-chan amqp.Delivery,
@@ -85,11 +81,11 @@ func runConsumeLoop(
 				return amqp.ErrClosed
 			}
 
-			// 1. Decode the combined ResultPacket structural layout
+			// 🎯 FIXED: Mapping directly to services.ResultPacket now extracts the nested arrays cleanly
 			var packet services.ResultPacket
 			if err := json.Unmarshal(msg.Body, &packet); err != nil {
 				log.Printf("[worker-processor] ❌ Failed to parse ResultPacket JSON: %v. Dropping corrupt message.", err)
-				_ = msg.Nack(false, false) // Drop without re-queueing corrupt syntax data
+				_ = msg.Nack(false, false)
 				continue
 			}
 
@@ -99,27 +95,23 @@ func runConsumeLoop(
 				len(packet.Results),
 			)
 
-			// 2. Route directly to your business logic layer
-			// ProcessPacket automatically inserts logs, resolves missing IDs, and subtracts monitor credit balances!
+			// Route payload context straight out into database settlement channels
 			rewardDelta, err := pingLogSvc.ProcessPacket(ctx, &packet)
 			if err != nil {
 				log.Printf("[worker-processor] 🚨 Failed to complete ProcessPacket business flow: %v. Re-queueing work batch.", err)
-				_ = msg.Nack(false, true) // Re-queue to preserve database integrity
+				_ = msg.Nack(false, true)
 				continue
 			}
 
-			// 3. Coordinate token settlement tracking if a reward delta was accumulated
 			if rewardDelta > 0 {
 				err = rewardSvc.AccumulateAndMaybeSync(ctx, packet.RunnerPubkey, rewardDelta)
 				if err != nil {
 					log.Printf("[worker-processor] ⚠️ Reward accumulation processing issue for %s: %v", packet.RunnerPubkey, err)
-					// We do not reject/re-queue here because the data has already successfully saved to your database inside ProcessPacket.
 				} else {
 					log.Printf("[SETTLEMENT] Successfully registered +%.4f token delta for Node: %s", rewardDelta, packet.RunnerPubkey)
 				}
 			}
 
-			// 4. Explicit Acknowledgment - Flush packet from queue
 			_ = msg.Ack(false)
 		}
 	}

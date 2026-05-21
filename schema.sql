@@ -64,7 +64,7 @@ CREATE TABLE ping_logs (
     latency_ms    INT         NOT NULL DEFAULT 0,
     status_code   INT         NOT NULL DEFAULT 0,
     success       BOOLEAN     NOT NULL DEFAULT FALSE,
-    error_kind    VARCHAR(64) NOT NULL DEFAULT '',  -- empty on success
+    error_kind    VARCHAR(400) NOT NULL DEFAULT '',  -- empty on success
     geo_region    VARCHAR(50) NOT NULL,
     timestamp     TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, timestamp)

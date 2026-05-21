@@ -72,20 +72,31 @@ func scheduleTick(
 	var dueMonitors []*repositories.Monitor
 
 	// Filter monitors that are currently due according to their ZSET timer score
-	for _, cm := range cachedMonitors {
-		key := fmt.Sprintf("sched:monitor:%s", cm.ID)
-		score, err := rdb.ZScore(ctx, "scheduler:due", key).Result()
-		if err != nil || int64(score) > now {
-			continue
-		}
+// Inside scheduleTick loop:
+for _, cm := range cachedMonitors {
+    key := fmt.Sprintf("sched:monitor:%s", cm.ID)
+    score, err := rdb.ZScore(ctx, "scheduler:due", key).Result()
 
-		// Map cache entries into domain-layer entity structures expected by the MatchBatch engine
-		dueMonitors = append(dueMonitors, &repositories.Monitor{
-			ID:                   cm.ID,
-			TargetURL:            cm.TargetURL,
-			CheckIntervalSeconds: cm.IntervalSeconds,
-		})
-	}
+    // FIX: If the monitor isn't in the ZSET, add it now with the current timestamp
+    if err == redis.Nil {
+        log.Printf("[scheduler] Discovering new monitor: %s", cm.ID)
+        rdb.ZAdd(ctx, "scheduler:due", redis.Z{Score: float64(now), Member: key})
+        score = float64(now)
+    } else if err != nil {
+        log.Printf("[scheduler] Error checking ZScore for %s: %v", cm.ID, err)
+        continue
+    }
+
+    if int64(score) > now {
+        continue
+    }
+
+    dueMonitors = append(dueMonitors, &repositories.Monitor{
+        ID:                   cm.ID,
+        TargetURL:            cm.TargetURL,
+        CheckIntervalSeconds: cm.IntervalSeconds,
+    })
+}
 
 	if len(dueMonitors) == 0 {
 		return nil
@@ -95,19 +106,27 @@ func scheduleTick(
 	// This respects the anti-DDOS filter (max 5 matching domains per batch)
 	assignments := sched.MatchBatch(dueMonitors)
 
-	// 3. Process matches and dispatch individual targeted payloads
-	for pubkey, m := range assignments {
-		// Use node public key as a lock namespace to avoid hammering an identical instance concurrently
-		lockKey := fmt.Sprintf("lock:monitor:%s:%s", m.ID, pubkey)
-		set, err := rdb.SetNX(ctx, lockKey, 1, time.Duration(m.CheckIntervalSeconds)*time.Second).Result()
-		if err != nil || !set {
-			continue // Already dispatched to this specific runner within this interval window
-		}
+// 3. Process matches and dispatch individual targeted payloads
+for pubkey, m := range assignments {
+    // 🛡️ FIX: Ensure interval is at least 1 second to satisfy Redis requirements
+    interval := time.Duration(m.CheckIntervalSeconds) * time.Second
+    if interval < time.Second {
+        interval = time.Second
+    }
 
-		// Build safe tracking jobID format embedding the runner token identity
-		jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
-		nonceKey := fmt.Sprintf("nonce:%s", jobID)
-		rdb.Set(ctx, nonceKey, 1, time.Duration(m.CheckIntervalSeconds*2)*time.Second)
+    lockKey := fmt.Sprintf("lock:monitor:%s:%s", m.ID, pubkey)
+    set, err := rdb.SetNX(ctx, lockKey, 1, interval).Result()
+    if err != nil || !set {
+        continue
+    }
+
+    // Build safe tracking jobID format
+    jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
+    nonceKey := fmt.Sprintf("nonce:%s", jobID)
+
+    // 🛡️ FIX: Increase TTL to 5 minutes to prevent network-lag rejections
+    rdb.Set(ctx, nonceKey, 1, 5*time.Minute)
+
 
 		payload := JobPayload{
 			JobID:        jobID,

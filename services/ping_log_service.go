@@ -15,32 +15,11 @@ import (
 
 // ── ResultPacket ───────────────────────────────────────────────────────────
 
+// ResultPacket represents the fully detailed JSON structure passed through RabbitMQ queues
 type ResultPacket struct {
-	RunnerPubkey string        `json:"runner_pubkey"`
-	Results      []ProbeRecord `json:"results"`
-}
-
-type ProbeRecord struct {
-	JobID      string `json:"job_id"`
-	BatchID    string `json:"batch_id"`
-	MonitorID  string `json:"monitor_id"`
-	TargetURL  string `json:"target_url"`
-	Success    bool   `json:"success"`
-	StatusCode int    `json:"status_code"`
-
-	// Phase latencies (microseconds) — from ProbeResult via gRPC
-	DnsUs   uint64 `json:"dns_us"`
-	TcpUs   uint64 `json:"tcp_us"`
-	TlsUs   uint64 `json:"tls_us"`
-	TtfbUs  uint64 `json:"ttfb_us"`
-	TotalUs uint64 `json:"total_us"`
-
-	// Derived millisecond latency
-	LatencyMs int `json:"latency_ms"`
-
-	ErrorKind   string `json:"error_kind"`
-	GeoRegion   string `json:"geo_region"`
-	TimestampMs uint64 `json:"timestamp_ms"`
+	RunnerPubkey string               `json:"runner_pubkey"`
+	Signature    string               `json:"signature"`
+	Results      []dto.PingResultItem `json:"results"` // 🚀 Points directly to the comprehensive DTO schema definition
 }
 
 // ── PingLogService ─────────────────────────────────────────────────────────
@@ -70,7 +49,8 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 	logsToInsert := make([]*repositories.PingLog, 0, len(packet.Results))
 	var collectiveBatchRewards float64
 
-	for _, r := range packet.Results {
+	for idx := range packet.Results {
+		r := &packet.Results[idx]
 		monitorID := r.MonitorID
 
 		// 1. Core Verification Phase
@@ -97,7 +77,6 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 		}
 
 		// 3. Dual-Sided Database Ledger Settlement (Atomic Transaction)
-		// This protects balances against single-sided failures or network timeouts.
 		err := s.store.ProcessJobSettlement(ctx, monitorID, packet.RunnerPubkey, tokenSettlementRate)
 		if err != nil {
 			log.Printf("[processor] settlement transaction aborted for monitor %s -> runner %s: %v", monitorID, packet.RunnerPubkey, err)
@@ -107,7 +86,7 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 		// 4. Transform Records Into System Log Profiles
 		ts := now
 		if r.TimestampMs > 0 {
-			ts = time.UnixMilli(int64(r.TimestampMs))
+			ts = time.UnixMilli(r.TimestampMs)
 		}
 
 		latencyMs := r.LatencyMs
@@ -118,12 +97,12 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 		logEntry := &repositories.PingLog{
 			MonitorID:    monitorID,
 			RunnerPubkey: packet.RunnerPubkey,
-			DnsUs:        r.DnsUs,
-			TcpUs:        r.TcpUs,
-			TlsUs:        r.TlsUs,
-			TtfbUs:       r.TtfbUs,
-			TotalUs:      r.TotalUs,
-			LatencyMs:    latencyMs,
+			DnsUs:        uint64(r.DnsUs), // ✅ int64 → uint64 cast, safe for positive durations
+			TcpUs:        uint64(r.TcpUs),
+			TlsUs:        uint64(r.TlsUs),
+			TtfbUs:       uint64(r.TtfbUs),
+			TotalUs:      uint64(r.TotalUs),
+			LatencyMs:    r.LatencyMs,
 			StatusCode:   r.StatusCode,
 			Success:      r.Success,
 			ErrorKind:    r.ErrorKind,
@@ -155,17 +134,11 @@ func (s *pingLogService) AvgLatencyUs(ctx context.Context, monitorID string, sin
 
 // ── REST path helper ───────────────────────────────────────────────────────
 
+// MarshalResultPacket cleanly preserves every single detailed microsecond and error tracking field for RabbitMQ
 func MarshalResultPacket(req *dto.SubmitResultsRequest) ([]byte, error) {
-	records := make([]ProbeRecord, len(req.Results))
-	for i, r := range req.Results {
-		records[i] = ProbeRecord{
-			JobID:      r.JobID,
-			MonitorID:  r.MonitorID,
-			StatusCode: r.StatusCode,
-			LatencyMs:  r.LatencyMs,
-			GeoRegion:  r.GeoRegion,
-			Success:    r.StatusCode >= 200 && r.StatusCode < 400,
-		}
-	}
-	return json.Marshal(ResultPacket{RunnerPubkey: req.RunnerPubkey, Results: records})
+	return json.Marshal(ResultPacket{
+		RunnerPubkey: req.RunnerPubkey,
+		Signature:    req.Signature,
+		Results:      req.Results, // 🎯 High-fidelity pass-through: retains all rich microsecond latency metrics!
+	})
 }

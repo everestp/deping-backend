@@ -107,62 +107,40 @@ func cleanDomain(rawURL string) string {
 }
 
 func (s *SmartScheduler) MatchBatch(monitors []*repositories.Monitor) map[string]*repositories.Monitor {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+    s.mu.Lock()
+    defer s.mu.Unlock()
 
-	assignments := make(map[string]*repositories.Monitor)
-	domainCounts := make(map[string]int)
-	onlineNodes := s.registry.GetOnlineNodes()
+    assignments := make(map[string]*repositories.Monitor)
+    domainCounts := make(map[string]int)
+    onlineNodes := s.registry.GetOnlineNodes()
 
-	if len(onlineNodes) == 0 {
-		return assignments
-	}
+    if len(onlineNodes) == 0 {
+        return assignments
+    }
 
-	for _, m := range monitors {
-		domain := cleanDomain(m.TargetURL)
+    // Sort or rotate your online nodes so you don't always start with the same one
+    // Simple way: shuffle or just use an index based on the domain
+    for _, m := range monitors {
+        domain := cleanDomain(m.TargetURL)
+        if domainCounts[domain] >= 5 {
+            continue
+        }
 
-		if domainCounts[domain] >= 5 {
-			continue
-		}
+        // Find the next node that isn't busy
+        for _, node := range onlineNodes {
+            if _, busy := assignments[node.Pubkey]; busy {
+                continue
+            }
 
-		var selectedNode *ActiveNode
-		lastAssignedPubkey := s.lastUsedNodes[domain]
-
-		var geographicCluster []ActiveNode
-		for _, node := range onlineNodes {
-			if _, busy := assignments[node.Pubkey]; busy {
-				continue
-			}
-
-			if len(geographicCluster) > 0 {
-				dist := calculateDistanceKm(geographicCluster[0].Latitude, geographicCluster[0].Longitude, node.Latitude, node.Longitude)
-				if dist <= 50.0 {
-					geographicCluster = append(geographicCluster, node)
-				}
-			} else {
-				geographicCluster = append(geographicCluster, node)
-			}
-		}
-
-		if len(geographicCluster) > 0 {
-			for _, n := range geographicCluster {
-				if n.Pubkey != lastAssignedPubkey {
-					target := n
-					selectedNode = &target
-					break
-				}
-			}
-			if selectedNode == nil {
-				selectedNode = &geographicCluster[0]
-			}
-		}
-
-		if selectedNode != nil {
-			assignments[selectedNode.Pubkey] = m
-			domainCounts[domain]++
-			s.lastUsedNodes[domain] = selectedNode.Pubkey
-		}
-	}
-
-	return assignments
+            // Basic Round-Robin per domain
+            last := s.lastUsedNodes[domain]
+            if node.Pubkey != last {
+                assignments[node.Pubkey] = m
+                domainCounts[domain]++
+                s.lastUsedNodes[domain] = node.Pubkey
+                break
+            }
+        }
+    }
+    return assignments
 }

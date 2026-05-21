@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/everestp/depin-backend/anticheat"
+	"github.com/everestp/depin-backend/dto"
 	"github.com/everestp/depin-backend/grpc/pb"
 	"github.com/everestp/depin-backend/services"
 )
@@ -232,47 +233,70 @@ func (s *MonitorServiceServer) handleMinerMessage(
 }
 
 func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID string, r *pb.ProbeResult) {
-	if err := s.validator.ValidateJobID(ctx, r.JobId); err != nil {
-		log.Printf("[grpc] rejected result node_id=%s job_id=%s: %v", nodeID, r.JobId, err)
-		return
-	}
+    if err := s.validator.ValidateJobID(ctx, r.JobId); err != nil {
+        log.Printf("[grpc] rejected result node_id=%s job_id=%s: %v", nodeID, r.JobId, err)
+        return
+    }
 
-	if err := s.validator.CheckRateLimit(ctx, nodeID, 600); err != nil {
-		log.Printf("[grpc] rate limit node_id=%s: %v", nodeID, err)
-		return
-	}
+    if err := s.validator.CheckRateLimit(ctx, nodeID, 600); err != nil {
+        log.Printf("[grpc] rate limit node_id=%s: %v", nodeID, err)
+        return
+    }
 
-	latencyMs := int(r.TotalUs / 1000)
-	if err := s.validator.DetectFakeLatency(ctx, nodeID, latencyMs); err != nil {
-		log.Printf("[grpc] fake latency node_id=%s job_id=%s: %v", nodeID, r.JobId, err)
-		return
-	}
+    latencyMs := int(r.TotalUs / 1000)
+    if err := s.validator.DetectFakeLatency(ctx, nodeID, latencyMs); err != nil {
+        log.Printf("[grpc] fake latency node_id=%s job_id=%s: %v", nodeID, r.JobId, err)
+        return
+    }
 
-	packet := probeResultToPacket(nodeID, r)
-	body, err := json.Marshal(packet)
-	if err != nil {
-		log.Printf("[grpc" + "] marshal probe result error: %v", err)
-		return
-	}
+    // Map Protobuf to DTO (Note: casts are required due to uint64 -> int64)
+    item := dto.PingResultItem{
+        JobID:       r.JobId,
+        BatchID:     r.BatchId,
+        NodeID:      nodeID,
+        TargetURL:   r.TargetUrl,
+        Success:     r.Success,
+        StatusCode:  int(r.StatusCode),
+        DnsUs:       int64(r.DnsUs),
+        TcpUs:       int64(r.TcpUs),
+        TlsUs:       int64(r.TlsUs),
+        TtfbUs:      int64(r.TtfbUs),
+        TotalUs:     int64(r.TotalUs),
+        LatencyMs:   latencyMs,
+        ErrorKind:   r.ErrorKind,
+        ErrorMsg:    r.ErrorMsg,
+        TimestampMs: int64(r.TimestampMs),
+    }
 
-	ch, err := s.GetHealthyChannel()
-	if err != nil {
-		log.Printf("[grpc] CRITICAL: Cannot publish result. Failed to acquire healthy channel: %v", err)
-		return
-	}
+    // Wrap in the ResultPacket structure expected by the worker
+    packet := services.ResultPacket{
+        RunnerPubkey: nodeID,
+        Results:      []dto.PingResultItem{item},
+    }
 
-	if err := ch.PublishWithContext(ctx, "", "processing_queue", false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         body,
-			DeliveryMode: amqp.Persistent,
-		},
-	); err != nil {
-		log.Printf("[grpc] publish probe result error node_id=%s: %v", nodeID, err)
-		_ = ch.Close()
-	}
+    body, err := json.Marshal(packet)
+    if err != nil {
+        log.Printf("[grpc] marshal probe result error: %v", err)
+        return
+    }
+
+    ch, err := s.GetHealthyChannel()
+    if err != nil {
+        log.Printf("[grpc] CRITICAL: Cannot publish result. Failed to acquire healthy channel: %v", err)
+        return
+    }
+
+    if err := ch.PublishWithContext(ctx, "", "processing_queue", false, false,
+        amqp.Publishing{
+            ContentType:  "application/json",
+            Body:         body,
+            DeliveryMode: amqp.Persistent,
+        },
+    ); err != nil {
+        log.Printf("[grpc] publish probe result error node_id=%s: %v", nodeID, err)
+        _ = ch.Close()
+    }
 }
-
 // ── Job Dispatching Realignment ───────────────────────────────────────────
 
 func (s *MonitorServiceServer) PushJobBatch(nodeID string, batch *pb.JobBatch) {

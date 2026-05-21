@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -33,42 +34,48 @@ func NewRewardService(store *repositories.Storage, rabbitCh *amqp.Channel, cfg *
 	return &rewardService{store: store, rabbitCh: rabbitCh, cfg: cfg}
 }
 
-// AccumulateAndMaybeSync calls the atomic DB function, then — if threshold was
-// crossed — enqueues a solana_sync_queue message. DB is mutated BEFORE any RPC.
 func (s *rewardService) AccumulateAndMaybeSync(ctx context.Context, pubkey string, delta float64) error {
-	res, err := s.store.Runners.AccumulateReward(ctx, pubkey, delta, s.cfg.RewardThreshold)
-	if err != nil {
-		return fmt.Errorf("accumulate reward: %w", err)
-	}
+    // 1. Atomic DB increment and "DidSync" check
+    // Ensure repository returns DidSync = true ONLY if:
+    // (old_balance + delta) >= s.cfg.RewardThreshold AND PendingSolanaSync was false.
+    res, err := s.store.Runners.AccumulateReward(ctx, pubkey, delta, s.cfg.RewardThreshold)
+    if err != nil {
+        return fmt.Errorf("accumulate reward: %w", err)
+    }
 
-	if !res.DidSync {
-		return nil
-	}
+    if !res.DidSync {
+        return nil
+    }
 
-	// Threshold crossed — push sync job. Overflow remainder is already preserved in DB.
-	payload := SolanaSyncPayload{
-		RunnerPubkey: pubkey,
-		AmountTokens: s.cfg.RewardThreshold,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal sync payload: %w", err)
-	}
+    // 2. Prepare payload
+    payload := SolanaSyncPayload{
+        RunnerPubkey: pubkey,
+        AmountTokens: res.NewBalance, // Send actual balance reached
+    }
 
-	err = s.rabbitCh.PublishWithContext(ctx, "", "solana_sync_queue", false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         body,
-			DeliveryMode: amqp.Persistent,
-		},
-	)
-	if err != nil {
-		// DB already decremented — mark pending_sync so retry worker can re-queue.
-		_ = s.store.Runners.SetPendingSync(ctx, pubkey, true)
-		return fmt.Errorf("publish sync job: %w", err)
-	}
+    body, err := json.Marshal(payload)
+    if err != nil {
+        return fmt.Errorf("marshal sync payload: %w", err)
+    }
 
-	return nil
+    // 3. Publish to queue
+    err = s.rabbitCh.PublishWithContext(ctx, "", "solana_sync_queue", false, false,
+        amqp.Publishing{
+            ContentType:  "application/json",
+            Body:         body,
+            DeliveryMode: amqp.Persistent,
+            // 💡 Add message ID or Timestamp to help with Idempotency
+            MessageId:    fmt.Sprintf("%s-%d", pubkey, time.Now().Unix()),
+        },
+    )
+
+    if err != nil {
+        // If publishing fails, we ensure the system knows it's pending
+        _ = s.store.Runners.SetPendingSync(ctx, pubkey, true)
+        return fmt.Errorf("publish sync job: %w", err)
+    }
+
+    return nil
 }
 
 func (s *rewardService) GetStatus(ctx context.Context, pubkey string) (*dto.RewardStatusResponse, error) {
