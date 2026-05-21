@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
@@ -24,7 +25,7 @@ type runnerService struct {
 	rdb         *redis.Client
 	rabbitCh    *amqp.Channel
 	cfg         *env.Config
-	memRegistry *MemoryRegistry // ADDED: Direct link to our real-time in-memory tracking pool
+	memRegistry *MemoryRegistry // Direct link to our real-time in-memory tracking pool
 }
 
 // NewRunnerService matches the exact signature called by your app's main orchestration wireframe.
@@ -33,14 +34,14 @@ func NewRunnerService(
 	rdb *redis.Client,
 	rabbitCh *amqp.Channel,
 	cfg *env.Config,
-	memRegistry *MemoryRegistry, // ADDED
+	memRegistry *MemoryRegistry,
 ) RunnerService {
 	return &runnerService{
 		store:       store,
 		rdb:         rdb,
 		rabbitCh:    rabbitCh,
 		cfg:         cfg,
-		memRegistry: memRegistry, // ADDED
+		memRegistry: memRegistry,
 	}
 }
 
@@ -49,7 +50,11 @@ func (s *runnerService) Register(ctx context.Context, email string, req *dto.Reg
 		return nil, errors.New("owner_pubkey and region are required")
 	}
 
-	node, err := s.store.Runners.Register(ctx, email, req.OwnerPubkey, req.Region, req.Latitude, req.Longitude)
+	// 💡 Convert string inputs to float64 to safely satisfy s.store.Runners.Register
+	lat, _ := strconv.ParseFloat(req.Latitude, 64)
+	lng, _ := strconv.ParseFloat(req.Longitude, 64)
+
+	node, err := s.store.Runners.Register(ctx, email, req.OwnerPubkey, req.Region, lat, lng)
 	if err != nil {
 		return nil, fmt.Errorf("register runner: %w", err)
 	}
@@ -88,6 +93,9 @@ func toRunnerResponse(n *repositories.RunnerNode) *dto.RunnerResponse {
 		ID:                        n.ID,
 		OwnerPubkey:               n.OwnerPubkey,
 		Region:                    n.Region,
+		// 💡 Convert your float64 properties smoothly back into readable strings for the DTO layer
+		Latitude:                  strconv.FormatFloat(n.Latitude, 'f', -1, 64),
+		Longitude:                 strconv.FormatFloat(n.Longitude, 'f', -1, 64),
 		OffchainAccumulatedTokens: n.OffchainAccumulatedTokens,
 		TotalEarnedTokensAllTime:  n.TotalEarnedTokensAllTime,
 		PendingSolanaSync:         n.PendingSolanaSync,

@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v3.21.12
-// source: monitor.proto
+// source: proto/monitor.proto
 
 package pb
 
@@ -36,7 +36,7 @@ type MinerMessage struct {
 
 func (x *MinerMessage) Reset() {
 	*x = MinerMessage{}
-	mi := &file_monitor_proto_msgTypes[0]
+	mi := &file_proto_monitor_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -48,7 +48,7 @@ func (x *MinerMessage) String() string {
 func (*MinerMessage) ProtoMessage() {}
 
 func (x *MinerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[0]
+	mi := &file_proto_monitor_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -61,7 +61,7 @@ func (x *MinerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MinerMessage.ProtoReflect.Descriptor instead.
 func (*MinerMessage) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{0}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *MinerMessage) GetPayload() isMinerMessage_Payload {
@@ -122,17 +122,16 @@ func (*MinerMessage_Result) isMinerMessage_Payload() {}
 
 type MinerRegister struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // ed25519 public key hex
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // ed25519 public key hex or Solana wallet pubkey
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`             // semver string, e.g. "0.1.0"
-	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`               // ISO 3166-1 alpha-2, e.g. "US"
-	TimestampMs   uint64                 `protobuf:"varint,4,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	TimestampMs   uint64                 `protobuf:"varint,3,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MinerRegister) Reset() {
 	*x = MinerRegister{}
-	mi := &file_monitor_proto_msgTypes[1]
+	mi := &file_proto_monitor_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -144,7 +143,7 @@ func (x *MinerRegister) String() string {
 func (*MinerRegister) ProtoMessage() {}
 
 func (x *MinerRegister) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[1]
+	mi := &file_proto_monitor_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -157,7 +156,7 @@ func (x *MinerRegister) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MinerRegister.ProtoReflect.Descriptor instead.
 func (*MinerRegister) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{1}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *MinerRegister) GetNodeId() string {
@@ -170,13 +169,6 @@ func (x *MinerRegister) GetNodeId() string {
 func (x *MinerRegister) GetVersion() string {
 	if x != nil {
 		return x.Version
-	}
-	return ""
-}
-
-func (x *MinerRegister) GetRegion() string {
-	if x != nil {
-		return x.Region
 	}
 	return ""
 }
@@ -198,7 +190,7 @@ type Ping struct {
 
 func (x *Ping) Reset() {
 	*x = Ping{}
-	mi := &file_monitor_proto_msgTypes[2]
+	mi := &file_proto_monitor_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -210,7 +202,7 @@ func (x *Ping) String() string {
 func (*Ping) ProtoMessage() {}
 
 func (x *Ping) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[2]
+	mi := &file_proto_monitor_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -223,7 +215,7 @@ func (x *Ping) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ping.ProtoReflect.Descriptor instead.
 func (*Ping) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{2}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Ping) GetTimestampMs() uint64 {
@@ -254,7 +246,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_monitor_proto_msgTypes[3]
+	mi := &file_proto_monitor_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -266,7 +258,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[3]
+	mi := &file_proto_monitor_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -279,7 +271,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{3}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ServerMessage) GetPayload() isServerMessage_Payload {
@@ -333,7 +325,7 @@ type Pong struct {
 
 func (x *Pong) Reset() {
 	*x = Pong{}
-	mi := &file_monitor_proto_msgTypes[4]
+	mi := &file_proto_monitor_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -345,7 +337,7 @@ func (x *Pong) String() string {
 func (*Pong) ProtoMessage() {}
 
 func (x *Pong) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[4]
+	mi := &file_proto_monitor_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -358,7 +350,7 @@ func (x *Pong) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pong.ProtoReflect.Descriptor instead.
 func (*Pong) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{4}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Pong) GetTimestampMs() uint64 {
@@ -385,7 +377,7 @@ type JobBatch struct {
 
 func (x *JobBatch) Reset() {
 	*x = JobBatch{}
-	mi := &file_monitor_proto_msgTypes[5]
+	mi := &file_proto_monitor_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -397,7 +389,7 @@ func (x *JobBatch) String() string {
 func (*JobBatch) ProtoMessage() {}
 
 func (x *JobBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[5]
+	mi := &file_proto_monitor_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -410,7 +402,7 @@ func (x *JobBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobBatch.ProtoReflect.Descriptor instead.
 func (*JobBatch) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{5}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *JobBatch) GetBatchId() string {
@@ -438,7 +430,7 @@ type Job struct {
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_monitor_proto_msgTypes[6]
+	mi := &file_proto_monitor_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +442,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[6]
+	mi := &file_proto_monitor_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -463,7 +455,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{6}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Job) GetJobId() string {
@@ -511,7 +503,7 @@ type ProbeResult struct {
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_monitor_proto_msgTypes[7]
+	mi := &file_proto_monitor_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -523,7 +515,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_monitor_proto_msgTypes[7]
+	mi := &file_proto_monitor_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -536,7 +528,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_monitor_proto_rawDescGZIP(), []int{7}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProbeResult) GetJobId() string {
@@ -637,21 +629,20 @@ func (x *ProbeResult) GetTimestampMs() uint64 {
 	return 0
 }
 
-var File_monitor_proto protoreflect.FileDescriptor
+var File_proto_monitor_proto protoreflect.FileDescriptor
 
-const file_monitor_proto_rawDesc = "" +
+const file_proto_monitor_proto_rawDesc = "" +
 	"\n" +
-	"\rmonitor.proto\x12\amonitor\"\xa4\x01\n" +
+	"\x13proto/monitor.proto\x12\amonitor\"\xa4\x01\n" +
 	"\fMinerMessage\x124\n" +
 	"\bregister\x18\x01 \x01(\v2\x16.monitor.MinerRegisterH\x00R\bregister\x12#\n" +
 	"\x04ping\x18\x02 \x01(\v2\r.monitor.PingH\x00R\x04ping\x12.\n" +
 	"\x06result\x18\x03 \x01(\v2\x14.monitor.ProbeResultH\x00R\x06resultB\t\n" +
-	"\apayload\"}\n" +
+	"\apayload\"e\n" +
 	"\rMinerRegister\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\x12\x16\n" +
-	"\x06region\x18\x03 \x01(\tR\x06region\x12!\n" +
-	"\ftimestamp_ms\x18\x04 \x01(\x04R\vtimestampMs\"B\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12!\n" +
+	"\ftimestamp_ms\x18\x03 \x01(\x04R\vtimestampMs\"B\n" +
 	"\x04Ping\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x04R\vtimestampMs\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"q\n" +
@@ -695,19 +686,19 @@ const file_monitor_proto_rawDesc = "" +
 	"grpc/pb;pbb\x06proto3"
 
 var (
-	file_monitor_proto_rawDescOnce sync.Once
-	file_monitor_proto_rawDescData []byte
+	file_proto_monitor_proto_rawDescOnce sync.Once
+	file_proto_monitor_proto_rawDescData []byte
 )
 
-func file_monitor_proto_rawDescGZIP() []byte {
-	file_monitor_proto_rawDescOnce.Do(func() {
-		file_monitor_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_monitor_proto_rawDesc), len(file_monitor_proto_rawDesc)))
+func file_proto_monitor_proto_rawDescGZIP() []byte {
+	file_proto_monitor_proto_rawDescOnce.Do(func() {
+		file_proto_monitor_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_monitor_proto_rawDesc), len(file_proto_monitor_proto_rawDesc)))
 	})
-	return file_monitor_proto_rawDescData
+	return file_proto_monitor_proto_rawDescData
 }
 
-var file_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
-var file_monitor_proto_goTypes = []any{
+var file_proto_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_proto_monitor_proto_goTypes = []any{
 	(*MinerMessage)(nil),  // 0: monitor.MinerMessage
 	(*MinerRegister)(nil), // 1: monitor.MinerRegister
 	(*Ping)(nil),          // 2: monitor.Ping
@@ -717,7 +708,7 @@ var file_monitor_proto_goTypes = []any{
 	(*Job)(nil),           // 6: monitor.Job
 	(*ProbeResult)(nil),   // 7: monitor.ProbeResult
 }
-var file_monitor_proto_depIdxs = []int32{
+var file_proto_monitor_proto_depIdxs = []int32{
 	1, // 0: monitor.MinerMessage.register:type_name -> monitor.MinerRegister
 	2, // 1: monitor.MinerMessage.ping:type_name -> monitor.Ping
 	7, // 2: monitor.MinerMessage.result:type_name -> monitor.ProbeResult
@@ -733,17 +724,17 @@ var file_monitor_proto_depIdxs = []int32{
 	0, // [0:6] is the sub-list for field type_name
 }
 
-func init() { file_monitor_proto_init() }
-func file_monitor_proto_init() {
-	if File_monitor_proto != nil {
+func init() { file_proto_monitor_proto_init() }
+func file_proto_monitor_proto_init() {
+	if File_proto_monitor_proto != nil {
 		return
 	}
-	file_monitor_proto_msgTypes[0].OneofWrappers = []any{
+	file_proto_monitor_proto_msgTypes[0].OneofWrappers = []any{
 		(*MinerMessage_Register)(nil),
 		(*MinerMessage_Ping)(nil),
 		(*MinerMessage_Result)(nil),
 	}
-	file_monitor_proto_msgTypes[3].OneofWrappers = []any{
+	file_proto_monitor_proto_msgTypes[3].OneofWrappers = []any{
 		(*ServerMessage_Pong)(nil),
 		(*ServerMessage_JobBatch)(nil),
 	}
@@ -751,17 +742,17 @@ func file_monitor_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_monitor_proto_rawDesc), len(file_monitor_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_monitor_proto_rawDesc), len(file_proto_monitor_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_monitor_proto_goTypes,
-		DependencyIndexes: file_monitor_proto_depIdxs,
-		MessageInfos:      file_monitor_proto_msgTypes,
+		GoTypes:           file_proto_monitor_proto_goTypes,
+		DependencyIndexes: file_proto_monitor_proto_depIdxs,
+		MessageInfos:      file_proto_monitor_proto_msgTypes,
 	}.Build()
-	File_monitor_proto = out.File
-	file_monitor_proto_goTypes = nil
-	file_monitor_proto_depIdxs = nil
+	File_proto_monitor_proto = out.File
+	file_proto_monitor_proto_goTypes = nil
+	file_proto_monitor_proto_depIdxs = nil
 }

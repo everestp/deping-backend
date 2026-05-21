@@ -32,34 +32,36 @@ type CreateMonitorRequest struct {
 }
 
 type MonitorResponse struct {
-	ID                   string  `json:"id"`
-	TargetURL            string  `json:"target_url"`
-	IntervalSeconds      int     `json:"interval_seconds"`
-	CreditBalanceChecks  int64   `json:"credit_balance_checks"`
-	TotalSpentTokens     float64 `json:"total_spent_tokens"`
-	IsActive             bool    `json:"is_active"`
+	ID                  string  `json:"id"`
+	TargetURL           string  `json:"target_url"`
+	IntervalSeconds     int     `json:"interval_seconds"`
+	CreditBalanceChecks int64   `json:"credit_balance_checks"`
+	TotalSpentTokens    float64 `json:"total_spent_tokens"`
+	IsActive            bool    `json:"is_active"`
 }
 
 type MonitorStatsResponse struct {
-	MonitorID        string  `json:"monitor_id"`
-	UptimePct24h     float64 `json:"uptime_pct_24h"`
-	UptimePct7d      float64 `json:"uptime_pct_7d"`
-	RecentPings      any     `json:"recent_pings"`
+	MonitorID    string  `json:"monitor_id"`
+	UptimePct24h float64 `json:"uptime_pct_24h"`
+	UptimePct7d  float64 `json:"uptime_pct_7d"`
+	RecentPings  any     `json:"recent_pings"`
 }
 
 // ── Runner ─────────────────────────────────────────────────────────────────
 
 type RegisterRunnerRequest struct {
-	OwnerPubkey string  `json:"owner_pubkey"`
-	Region      string  `json:"region"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
+	OwnerPubkey string `json:"owner_pubkey"`
+	Region      string `json:"region"`
+	Latitude    string `json:"latitude"`  // 💡 Updated to string to match low-level repo scanning
+	Longitude   string `json:"longitude"` // 💡 Updated to string to match low-level repo scanning
 }
 
 type RunnerResponse struct {
 	ID                        int     `json:"id"`
 	OwnerPubkey               string  `json:"owner_pubkey"`
 	Region                    string  `json:"region"`
+	Latitude                  string  `json:"latitude"`  // 🎯 ADDED: Fixes grpc/server.go compilation failures
+	Longitude                 string  `json:"longitude"` // 🎯 ADDED: Fixes grpc/server.go compilation failures
 	OffchainAccumulatedTokens float64 `json:"offchain_accumulated_tokens"`
 	TotalEarnedTokensAllTime  float64 `json:"total_earned_tokens_all_time"`
 	PendingSolanaSync         bool    `json:"pending_solana_sync"`

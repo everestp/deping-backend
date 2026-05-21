@@ -3,6 +3,7 @@ syntax = "proto3";
 package monitor;
 
 option go_package = "grpc/pb;pb";
+
 // ─── Service Definition ────────────────────────────────────────────────────
 service MonitorService {
   // Bidirectional streaming RPC. The miner sends MinerMessages (register, ping,
@@ -20,10 +21,9 @@ message MinerMessage {
 }
 
 message MinerRegister {
-  string node_id      = 1;  // ed25519 public key hex
+  string node_id      = 1;  // ed25519 public key hex or Solana wallet pubkey
   string version      = 2;  // semver string, e.g. "0.1.0"
-  string region       = 3;  // ISO 3166-1 alpha-2, e.g. "US"
-  uint64 timestamp_ms = 4;
+  uint64 timestamp_ms = 3;
 }
 
 message Ping {
@@ -45,8 +45,8 @@ message Pong {
 }
 
 message JobBatch {
-  string       batch_id = 1;
-  repeated Job jobs     = 2;
+  string   batch_id = 1;
+  repeated Job jobs = 2;
 }
 
 message Job {
@@ -62,7 +62,7 @@ message ProbeResult {
   string node_id     = 3;
   string target_url  = 4;
   bool   success     = 5;
-  uint32 status_code = 6;   // 0 when connection never established
+  uint32 status_code = 6;  // 0 when connection never established
 
   // Phase latencies in microseconds for sub-millisecond precision
   uint64 dns_us   = 7;
@@ -71,7 +71,7 @@ message ProbeResult {
   uint64 ttfb_us  = 10;
   uint64 total_us = 11;
 
-  string error_kind   = 12;  // empty on success; enum-like string from Rust
+  string error_kind   = 12; // empty on success; enum-like string from Rust
   string error_msg    = 13;
   uint64 timestamp_ms = 14;
 }
