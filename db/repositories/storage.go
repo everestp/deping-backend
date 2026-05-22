@@ -115,6 +115,8 @@ type PingLog struct {
 	Success      bool
 	ErrorKind    string
 	GeoRegion    string
+	Latitude  float64
+    Longitude float64  
 	Timestamp    time.Time
 }
 

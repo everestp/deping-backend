@@ -81,57 +81,68 @@ type pingLogRepo struct{ pool *pgxpool.Pool }
 // BulkInsert uses pgx.CopyFrom — handles tens of thousands of rows/second.
 // Stores all ProbeResult phase latencies in microseconds.
 func (r *pingLogRepo) BulkInsert(ctx context.Context, logs []*PingLog) error {
-	if len(logs) == 0 {
-		return nil
-	}
-	rows := make([][]any, len(logs))
-	for i, l := range logs {
-		rows[i] = []any{
-			l.MonitorID, l.RunnerPubkey,
-			l.DnsUs, l.TcpUs, l.TlsUs, l.TtfbUs, l.TotalUs,
-			l.LatencyMs, l.StatusCode, l.Success, l.ErrorKind,
-			l.GeoRegion, l.Timestamp,
-		}
-	}
-	_, err := r.pool.CopyFrom(ctx,
-		pgx.Identifier{"ping_logs"},
-		[]string{
-			"monitor_id", "runner_pubkey",
-			"dns_us", "tcp_us", "tls_us", "ttfb_us", "total_us",
-			"latency_ms", "status_code", "success", "error_kind",
-			"geo_region", "timestamp",
-		},
-		pgx.CopyFromRows(rows),
-	)
-	if err != nil {
-		return fmt.Errorf("pingLogRepo.BulkInsert: %w", err)
-	}
-	return nil
+    if len(logs) == 0 {
+        return nil
+    }
+
+    rows := make([][]any, len(logs))
+    for i, l := range logs {
+        rows[i] = []any{
+            l.MonitorID, l.RunnerPubkey,
+            l.DnsUs, l.TcpUs, l.TlsUs, l.TtfbUs, l.TotalUs,
+            l.LatencyMs, l.StatusCode, l.Success, l.ErrorKind,
+            l.GeoRegion, l.Timestamp, l.Latitude, l.Longitude,
+        }
+    }
+
+    _, err := r.pool.CopyFrom(ctx,
+        pgx.Identifier{"ping_logs"},
+        []string{
+            "monitor_id", "runner_pubkey",
+            "dns_us", "tcp_us", "tls_us", "ttfb_us", "total_us",
+            "latency_ms", "status_code", "success", "error_kind",
+            "geo_region", "timestamp", "latitude", "longitude",
+        },
+        pgx.CopyFromRows(rows),
+    )
+
+    if err != nil {
+        return fmt.Errorf("pingLogRepo.BulkInsert: %w", err)
+    }
+    return nil
 }
 
 func (r *pingLogRepo) FindByMonitor(ctx context.Context, monitorID string, limit int) ([]*PingLog, error) {
-	const q = `
-		SELECT id, monitor_id, runner_pubkey,
-		       dns_us, tcp_us, tls_us, ttfb_us, total_us,
-		       latency_ms, status_code, success, error_kind, geo_region, timestamp
-		FROM ping_logs WHERE monitor_id = $1 ORDER BY timestamp DESC LIMIT $2`
-	rows, err := r.pool.Query(ctx, q, monitorID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("pingLogRepo.FindByMonitor: %w", err)
-	}
-	defer rows.Close()
-	var result []*PingLog
-	for rows.Next() {
-		l := &PingLog{}
-		if err := rows.Scan(&l.ID, &l.MonitorID, &l.RunnerPubkey,
-			&l.DnsUs, &l.TcpUs, &l.TlsUs, &l.TtfbUs, &l.TotalUs,
-			&l.LatencyMs, &l.StatusCode, &l.Success, &l.ErrorKind,
-			&l.GeoRegion, &l.Timestamp); err != nil {
-			return nil, err
-		}
-		result = append(result, l)
-	}
-	return result, rows.Err()
+    const q = `
+        SELECT id, monitor_id, runner_pubkey,
+               dns_us, tcp_us, tls_us, ttfb_us, total_us,
+               latency_ms, status_code, success, error_kind,
+               geo_region, timestamp, latitude, longitude
+        FROM ping_logs
+        WHERE monitor_id = $1
+        ORDER BY timestamp DESC
+        LIMIT $2`
+
+    rows, err := r.pool.Query(ctx, q, monitorID, limit)
+    if err != nil {
+        return nil, fmt.Errorf("pingLogRepo.FindByMonitor: %w", err)
+    }
+    defer rows.Close()
+
+    var result []*PingLog
+    for rows.Next() {
+        l := &PingLog{}
+        if err := rows.Scan(
+            &l.ID, &l.MonitorID, &l.RunnerPubkey,
+            &l.DnsUs, &l.TcpUs, &l.TlsUs, &l.TtfbUs, &l.TotalUs,
+            &l.LatencyMs, &l.StatusCode, &l.Success, &l.ErrorKind,
+            &l.GeoRegion, &l.Timestamp, &l.Latitude, &l.Longitude,
+        ); err != nil {
+            return nil, err
+        }
+        result = append(result, l)
+    }
+    return result, rows.Err()
 }
 
 func (r *pingLogRepo) UptimePercentage(ctx context.Context, monitorID string, since time.Time) (float64, error) {
@@ -208,10 +219,9 @@ func (r *solanaSyncRepo) ExistsBySignature(ctx context.Context, txSignature stri
 	return exists, err
 }
 
-
 // ADD this method to your runnerRepo implementation:
 func (r *runnerRepo) FindByEmailAndPubkey(ctx context.Context, email, pubkey string) ([]*RunnerNode, error) {
-    const q = `
+	const q = `
         SELECT id, owner_email, owner_pubkey, region, latitude, longitude,
                offchain_accumulated_tokens, total_earned_tokens_all_time,
                pending_solana_sync, last_seen_timestamp
@@ -219,22 +229,22 @@ func (r *runnerRepo) FindByEmailAndPubkey(ctx context.Context, email, pubkey str
         WHERE owner_email = $1 AND owner_pubkey = $2 AND deleted_at IS NULL
         ORDER BY created_at DESC`
 
-    rows, err := r.pool.Query(ctx, q, email, pubkey)
-    if err != nil {
-        return nil, fmt.Errorf("runnerRepo.FindByEmailAndPubkey: %w", err)
-    }
-    defer rows.Close()
+	rows, err := r.pool.Query(ctx, q, email, pubkey)
+	if err != nil {
+		return nil, fmt.Errorf("runnerRepo.FindByEmailAndPubkey: %w", err)
+	}
+	defer rows.Close()
 
-    var result []*RunnerNode
-    for rows.Next() {
-        n := &RunnerNode{}
-        err := rows.Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.Region, &n.Latitude, &n.Longitude,
-            &n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
-            &n.PendingSolanaSync, &n.LastSeenTimestamp)
-        if err != nil {
-            return nil, err
-        }
-        result = append(result, n)
-    }
-    return result, rows.Err()
+	var result []*RunnerNode
+	for rows.Next() {
+		n := &RunnerNode{}
+		err := rows.Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.Region, &n.Latitude, &n.Longitude,
+			&n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
+			&n.PendingSolanaSync, &n.LastSeenTimestamp)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, n)
+	}
+	return result, rows.Err()
 }

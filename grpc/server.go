@@ -82,6 +82,7 @@ type connectedMiner struct {
 	nodeID    string
 	latitude  float64
 	longitude float64
+	region string
 	sendCh    chan *pb.ServerMessage
 }
 
@@ -146,11 +147,12 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
 	dbLat, _ := strconv.ParseFloat(dbRunner.Latitude, 64)
 	dbLng, _ := strconv.ParseFloat(dbRunner.Longitude, 64)
 
+
 	log.Printf("[grpc] miner registered via database coordinates: node_id=%s database-location=(%.4f, %.4f) version=%s", nodeID, dbLat, dbLng, version)
 
 	sendCh := make(chan *pb.ServerMessage, 64)
 	s.mu.Lock()
-	s.miners[nodeID] = &connectedMiner{nodeID: nodeID, latitude: dbLat, longitude: dbLng, sendCh: sendCh}
+	s.miners[nodeID] = &connectedMiner{nodeID: nodeID, latitude: dbLat, longitude: dbLng,region: dbRunner.Region, sendCh: sendCh}
 	s.mu.Unlock()
 
 	defer func() {
@@ -248,8 +250,23 @@ func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID str
         log.Printf("[grpc] fake latency node_id=%s job_id=%s: %v", nodeID, r.JobId, err)
         return
     }
+s.mu.RLock()
+    miner, ok := s.miners[nodeID]
+    s.mu.RUnlock()
 
-    // Map Protobuf to DTO (Note: casts are required due to uint64 -> int64)
+    // Initialize with defaults
+    region := "Unknown"
+    lat := 0.0
+    lng := 0.0
+
+    // Populate from cached miner state if available
+    if ok {
+        region = miner.region
+        lat = miner.latitude
+        lng = miner.longitude
+    }
+
+    // Map Protobuf to DTO
     item := dto.PingResultItem{
         JobID:       r.JobId,
         BatchID:     r.BatchId,
@@ -266,8 +283,10 @@ func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID str
         ErrorKind:   r.ErrorKind,
         ErrorMsg:    r.ErrorMsg,
         TimestampMs: int64(r.TimestampMs),
+        GeoRegion:   region,
+        Latitude:    lat,
+        Longitude:   lng,   
     }
-
     // Wrap in the ResultPacket structure expected by the worker
     packet := services.ResultPacket{
         RunnerPubkey: nodeID,

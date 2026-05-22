@@ -70,8 +70,8 @@ type RunnerResponse struct {
 	ID                        int     `json:"id"`
 	OwnerPubkey               string  `json:"owner_pubkey"`
 	Region                    string  `json:"region"`
-	Latitude                  string  `json:"latitude"`  // 🎯 ADDED: Fixes grpc/server.go compilation failures
-	Longitude                 string  `json:"longitude"` // 🎯 ADDED: Fixes grpc/server.go compilation failures
+	Latitude                  string  `json:"latitude"`
+	Longitude                 string  `json:"longitude"`
 	OffchainAccumulatedTokens float64 `json:"offchain_accumulated_tokens"`
 	TotalEarnedTokensAllTime  float64 `json:"total_earned_tokens_all_time"`
 	PendingSolanaSync         bool    `json:"pending_solana_sync"`
@@ -102,6 +102,8 @@ type PingResultItem struct {
 	MonitorID   string `json:"monitor_id"`   // Legacy matching attribute (populated via split fallback)
 	GeoRegion   string `json:"geo_region"`   // Geographic regional cluster mapping context
 	TimestampMs int64  `json:"timestamp_ms"` // Unix epoch milliseconds when the probe was dispatched
+	Latitude  float64 `json:"latitude"`
+    Longitude float64 `json:"longitude"`
 }
 
 type SubmitResultsRequest struct {
