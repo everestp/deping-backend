@@ -140,14 +140,15 @@ type UserRepository interface {
 }
 
 type MonitorRepository interface {
-	Create(ctx context.Context, ownerID int, targetURL string, intervalSeconds int) (*Monitor, error)
-	FindByOwner(ctx context.Context, ownerID int) ([]*Monitor, error)
-	FindActive(ctx context.Context) ([]*Monitor, error)
-	FindByJobID(ctx context.Context, jobID string) (*Monitor, error)
-	UpdateActive(ctx context.Context, id string, isActive bool) error
-	// CHANGED: Accepts dynamic token cost adjustments
-	DeductCredit(ctx context.Context, id string, tokenCost float64) error
-	Delete(ctx context.Context, id string, ownerID int) error
+    Create(ctx context.Context, ownerID int, targetURL string, intervalSeconds int) (*Monitor, error)
+    FindByOwner(ctx context.Context, ownerID int) ([]*Monitor, error)
+    FindActive(ctx context.Context) ([]*Monitor, error)
+    // ADDED: Efficient batch lookup for the scheduler
+    FindMany(ctx context.Context, ids []string) ([]*Monitor, error)
+    FindByJobID(ctx context.Context, jobID string) (*Monitor, error)
+    UpdateActive(ctx context.Context, id string, isActive bool) error
+    DeductCredit(ctx context.Context, id string, tokenCost float64) error
+    Delete(ctx context.Context, id string, ownerID int) error
 }
 
 type RunnerRepository interface {

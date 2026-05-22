@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,101 +63,74 @@ func scheduleTick(
 	reg *services.MemoryRegistry,
 	sched *services.SmartScheduler,
 ) error {
-	// 1. Fetch monitor entries due for updates from Redis/Postgres cache
-	cachedMonitors, err := cachedActiveMonitors(ctx, rdb, pool)
-	if err != nil {
-		return fmt.Errorf("get active monitors: %w", err)
-	}
-
 	now := time.Now().Unix()
-	var dueMonitors []*repositories.Monitor
 
-	// Filter monitors that are currently due according to their ZSET timer score
-// Inside scheduleTick loop:
-for _, cm := range cachedMonitors {
-    key := fmt.Sprintf("sched:monitor:%s", cm.ID)
-    score, err := rdb.ZScore(ctx, "scheduler:due", key).Result()
-
-    // FIX: If the monitor isn't in the ZSET, add it now with the current timestamp
-    if err == redis.Nil {
-        log.Printf("[scheduler] Discovering new monitor: %s", cm.ID)
-        rdb.ZAdd(ctx, "scheduler:due", redis.Z{Score: float64(now), Member: key})
-        score = float64(now)
-    } else if err != nil {
-        log.Printf("[scheduler] Error checking ZScore for %s: %v", cm.ID, err)
-        continue
-    }
-
-    if int64(score) > now {
-        continue
-    }
-
-    dueMonitors = append(dueMonitors, &repositories.Monitor{
-        ID:                   cm.ID,
-        TargetURL:            cm.TargetURL,
-        CheckIntervalSeconds: cm.IntervalSeconds,
-    })
-}
-
-	if len(dueMonitors) == 0 {
+	// 1. Get due members (using your ZSET logic)
+	dueMembers, err := rdb.ZRangeByScore(ctx, "scheduler:due", &redis.ZRangeBy{
+		Min: "-inf", Max: fmt.Sprintf("%d", now), Offset: 0, Count: 100,
+	}).Result()
+	if err != nil || len(dueMembers) == 0 {
 		return nil
 	}
 
-	// 2. Pass due jobs to your advanced 50km spatial round-robin matcher engine
-	// This respects the anti-DDOS filter (max 5 matching domains per batch)
-	assignments := sched.MatchBatch(dueMonitors)
-
-// 3. Process matches and dispatch individual targeted payloads
-for pubkey, m := range assignments {
-    // 🛡️ FIX: Ensure interval is at least 1 second to satisfy Redis requirements
-    interval := time.Duration(m.CheckIntervalSeconds) * time.Second
-    if interval < time.Second {
-        interval = time.Second
+	// 2. Map members to Monitor IDs
+    monitorIDs := make([]string, 0, len(dueMembers))
+    for _, m := range dueMembers {
+        // Change "monitor:" to "sched:monitor:" to match your error logs
+        id := strings.TrimPrefix(m, "sched:monitor:")
+        monitorIDs = append(monitorIDs, id)
     }
 
-    lockKey := fmt.Sprintf("lock:monitor:%s:%s", m.ID, pubkey)
-    set, err := rdb.SetNX(ctx, lockKey, 1, interval).Result()
-    if err != nil || !set {
-        continue
+	// 3. Batch fetch monitor details
+	repo := repositories.NewStorage(pool) // Ensure you have access to this
+	monitors, err := repo.Monitors.FindMany(ctx, monitorIDs)
+	if err != nil {
+		return err
+	}
+
+	// 4. Handle "Ghost" monitors: If a monitor was in ZSET but not in DB, remove it
+	foundIDs := make(map[string]bool)
+	for _, m := range monitors {
+		foundIDs[m.ID] = true
+	}
+for _, m := range dueMembers {
+        // Change "monitor:" to "sched:monitor:" here too
+        id := strings.TrimPrefix(m, "sched:monitor:")
+        if !foundIDs[id] {
+            rdb.ZRem(ctx, "scheduler:due", m)
+        }
     }
 
-    // Build safe tracking jobID format
-    jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
-    nonceKey := fmt.Sprintf("nonce:%s", jobID)
+	// 5. Batch Dispatch
+	assignments := sched.MatchBatch(monitors)
+	for pubkey, m := range assignments {
+		// Calculate next run time
+		nextDue := float64(now + int64(m.CheckIntervalSeconds))
 
-    // 🛡️ FIX: Increase TTL to 5 minutes to prevent network-lag rejections
-    rdb.Set(ctx, nonceKey, 1, 5*time.Minute)
+		// Update ZSET immediately to prevent duplicate scheduling if this tick is slow
+		rdb.ZAdd(ctx, "scheduler:due", redis.Z{
+    Score: nextDue,
+    Member: "sched:monitor:" + m.ID, // Match the prefix!
+})
 
+		// 6. Build and publish payload
+		jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
+		rdb.Set(ctx, "nonce:"+jobID, "1", 15*time.Minute)
 
 		payload := JobPayload{
-			JobID:        jobID,
-			MonitorID:    m.ID,
-			TargetURL:    m.TargetURL,
-			RunnerPubkey: pubkey,
-			IssuedAt:     now,
-			ExpiresAt:    now + int64(m.CheckIntervalSeconds*2),
+			JobID: jobID, MonitorID: m.ID, TargetURL: m.TargetURL,
+			RunnerPubkey: pubkey, IssuedAt: now,
+			ExpiresAt: now + int64(m.CheckIntervalSeconds*2),
 		}
 		body, _ := json.Marshal(payload)
 
-		// 4. Publish to RabbitMQ. Your consumer can routing-key filter jobs
-		// or pass them directly over specific active client SSE/WebSocket streams.
-		_ = rabbitCh.PublishWithContext(ctx, "", "job_queue", false, false,
-			amqp.Publishing{
-				ContentType:  "application/json",
-				Body:         body,
-				DeliveryMode: amqp.Persistent,
-			},
-		)
-
-		// 5. Update ZSET scheduler queue marker time block for this monitor profile
-		key := fmt.Sprintf("sched:monitor:%s", m.ID)
-		nextDue := float64(now + int64(m.CheckIntervalSeconds))
-		rdb.ZAdd(ctx, "scheduler:due", redis.Z{Score: nextDue, Member: key})
+		_ = rabbitCh.PublishWithContext(ctx, "", "job_queue", false, false, amqp.Publishing{
+			ContentType: "application/json", Body: body, DeliveryMode: amqp.Persistent,
+		})
 	}
 
 	return nil
 }
-
 type monitorCacheEntry struct {
 	ID              string `json:"id"`
 	TargetURL       string `json:"target_url"`
