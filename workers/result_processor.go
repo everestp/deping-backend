@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+
 	"log"
 	"time"
 
@@ -56,6 +57,7 @@ func StartResultProcessor(
 				}
 
 				err = runConsumeLoop(ctx, msgs, pingLogSvc, rewardSvc)
+
 				if err != nil {
 					log.Printf("[worker-processor] Stream connection severed: %v. Re-establishing...", err)
 				}
@@ -94,8 +96,8 @@ func runConsumeLoop(
 				packet.RunnerPubkey,
 				len(packet.Results),
 			)
-
-			// Route payload context straight out into database settlement channels
+// Replace your log line with this:
+log.Printf("The data of the packet: %+v", packet)	// Route payload context straight out into database settlement channels
 			rewardDelta, err := pingLogSvc.ProcessPacket(ctx, &packet)
 			if err != nil {
 				log.Printf("[worker-processor] 🚨 Failed to complete ProcessPacket business flow: %v. Re-queueing work batch.", err)

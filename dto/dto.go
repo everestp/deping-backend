@@ -42,7 +42,8 @@ type MonitorResponse struct {
 }
 
 type MonitorStatsResponse struct {
-    MonitorID    string  `json:"monitor_id"`
+	MonitorID    string  `json:"monitor_id"`
+	CheckInterval int     `json:"check_interval"`
     UptimePct24h float64 `json:"uptime_pct_24h"`
     UptimePct7d  float64 `json:"uptime_pct_7d"`
     RecentPings  any     `json:"recent_pings"`
@@ -70,8 +71,8 @@ type RunnerResponse struct {
 	ID                        int     `json:"id"`
 	OwnerPubkey               string  `json:"owner_pubkey"`
 	Region                    string  `json:"region"`
-	Latitude                  string  `json:"latitude"`
-	Longitude                 string  `json:"longitude"`
+	Latitude                  float64  `json:"latitude"`
+	Longitude                 float64  `json:"longitude"`
 	OffchainAccumulatedTokens float64 `json:"offchain_accumulated_tokens"`
 	TotalEarnedTokensAllTime  float64 `json:"total_earned_tokens_all_time"`
 	PendingSolanaSync         bool    `json:"pending_solana_sync"`

@@ -27,6 +27,7 @@ func (r *monitorRepo) Create(ctx context.Context, ownerID int, targetURL string,
 	return m, nil
 }
 
+
 func (r *monitorRepo) FindByOwner(ctx context.Context, ownerID int) ([]*Monitor, error) {
 	const q = `
 		SELECT id, owner_id, target_url, check_interval_seconds,

@@ -108,6 +108,8 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 			ErrorKind:    r.ErrorKind,
 			GeoRegion:    r.GeoRegion,
 			Timestamp:    ts,
+			Latitude:     r.Latitude,
+            Longitude:    r.Longitude,
 		}
 
 		logsToInsert = append(logsToInsert, logEntry)

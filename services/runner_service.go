@@ -94,8 +94,8 @@ func toRunnerResponse(n *repositories.RunnerNode) *dto.RunnerResponse {
 		OwnerPubkey:               n.OwnerPubkey,
 		Region:                    n.Region,
 		// 💡 Convert your float64 properties smoothly back into readable strings for the DTO layer
-		Latitude:                  strconv.FormatFloat(n.Latitude, 'f', -1, 64),
-		Longitude:                 strconv.FormatFloat(n.Longitude, 'f', -1, 64),
+		Latitude:                   n.Latitude,
+		Longitude:                 n.Longitude,
 		OffchainAccumulatedTokens: n.OffchainAccumulatedTokens,
 		TotalEarnedTokensAllTime:  n.TotalEarnedTokensAllTime,
 		PendingSolanaSync:         n.PendingSolanaSync,

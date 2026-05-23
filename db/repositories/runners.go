@@ -179,13 +179,16 @@ func (r *monitorRepo) FindByJobID(ctx context.Context, jobID string) (*Monitor, 
 	for i, c := range jobID {
 		if c == ':' {
 			monitorID := jobID[:i]
-			return r.findByID(ctx, monitorID)
+			return r.FindByID(ctx, monitorID)
 		}
 	}
 	return nil, fmt.Errorf("monitorRepo.FindByJobID: malformed job_id %q", jobID)
 }
+func (r *monitorRepo) FindByMonitorID(ctx context.Context, monitorId string) (*Monitor, error) {
+	return r.FindByID(ctx, monitorId)
+}
 
-func (r *monitorRepo) findByID(ctx context.Context, id string) (*Monitor, error) {
+func (r *monitorRepo) FindByID(ctx context.Context, id string) (*Monitor, error) {
 	const q = `
 		SELECT id, owner_id, target_url, check_interval_seconds,
 		       credit_balance_checks, total_spent_tokens, is_active, created_at

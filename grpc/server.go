@@ -6,7 +6,7 @@ import (
 	"io"
 	"log"
 	"math"
-	"strconv"
+
 	"sync"
 	"time"
 
@@ -144,15 +144,13 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
 	}
 
 	// Safely parse string fields from database into geolocation float structures
-	dbLat, _ := strconv.ParseFloat(dbRunner.Latitude, 64)
-	dbLng, _ := strconv.ParseFloat(dbRunner.Longitude, 64)
 
 
-	log.Printf("[grpc] miner registered via database coordinates: node_id=%s database-location=(%.4f, %.4f) version=%s", nodeID, dbLat, dbLng, version)
+	log.Printf("[grpc] miner registered via database coordinates: node_id=%s database-location=(%.4f, %.4f) version=%s", nodeID, dbRunner.Latitude, dbRunner.Longitude, version)
 
 	sendCh := make(chan *pb.ServerMessage, 64)
 	s.mu.Lock()
-	s.miners[nodeID] = &connectedMiner{nodeID: nodeID, latitude: dbLat, longitude: dbLng,region: dbRunner.Region, sendCh: sendCh}
+	s.miners[nodeID] = &connectedMiner{nodeID: nodeID, latitude: dbRunner.Latitude, longitude: dbRunner.Longitude,region: dbRunner.Region, sendCh: sendCh}
 	s.mu.Unlock()
 
 	defer func() {
@@ -285,7 +283,7 @@ s.mu.RLock()
         TimestampMs: int64(r.TimestampMs),
         GeoRegion:   region,
         Latitude:    lat,
-        Longitude:   lng,   
+        Longitude:   lng,
     }
     // Wrap in the ResultPacket structure expected by the worker
     packet := services.ResultPacket{
@@ -453,42 +451,4 @@ type jobPayloadRaw struct {
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
-type probeResultPacket struct {
-	RunnerPubkey string `json:"runner_pubkey"`
-	JobID        string `json:"job_id"`
-	BatchID      string `json:"batch_id"`
-	MonitorID    string `json:"monitor_id"`
-	TargetURL    string `json:"target_url"`
-	Success      bool   `json:"success"`
-	StatusCode   uint32 `json:"status_code"`
-	DnsUs        uint64 `json:"dns_us"`
-	TcpUs        uint64 `json:"tcp_us"`
-	TlsUs        uint64 `json:"tls_us"`
-	TtfbUs       uint64 `json:"ttfb_us"`
-	TotalUs      uint64 `json:"total_us"`
-	LatencyMs    int    `json:"latency_ms"`
-	ErrorKind    string `json:"error_kind"`
-	ErrorMsg     string `json:"error_msg"`
-	TimestampMs  uint64 `json:"timestamp_ms"`
-}
 
-func probeResultToPacket(nodeID string, r *pb.ProbeResult) *probeResultPacket {
-	return &probeResultPacket{
-		RunnerPubkey: nodeID,
-		JobID:        r.JobId,
-		BatchID:      r.BatchId,
-		MonitorID:    "",
-		TargetURL:    r.TargetUrl,
-		Success:      r.Success,
-		StatusCode:   r.StatusCode,
-		DnsUs:        r.DnsUs,
-		TcpUs:        r.TcpUs,
-		TlsUs:        r.TlsUs,
-		TtfbUs:       r.TtfbUs,
-		TotalUs:      r.TotalUs,
-		LatencyMs:    int(r.TotalUs / 1000),
-		ErrorKind:    r.ErrorKind,
-		ErrorMsg:     r.ErrorMsg,
-		TimestampMs:  r.TimestampMs,
-	}
-}

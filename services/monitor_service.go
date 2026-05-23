@@ -78,13 +78,18 @@ func (s *monitorService) Stats(ctx context.Context, monitorID string, ownerID in
 	if err != nil {
 		return nil, err
 	}
-	recent, err := s.store.PingLogs.FindByMonitor(ctx, monitorID, 100)
+	monitor, err := s.store.Monitors.FindByMonitorID(ctx,monitorID)
+	if err != nil {
+		return nil, err
+	}
+	recent, err := s.store.PingLogs.FindByMonitor(ctx, monitorID, 7)
 	if err != nil {
 		return nil, err
 	}
 
 	return &dto.MonitorStatsResponse{
 		MonitorID:    monitorID,
+		CheckInterval: monitor.CheckIntervalSeconds,
 		UptimePct24h: pct24h,
 		UptimePct7d:  pct7d,
 		RecentPings:  recent,

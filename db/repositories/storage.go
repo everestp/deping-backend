@@ -116,7 +116,7 @@ type PingLog struct {
 	ErrorKind    string
 	GeoRegion    string
 	Latitude  float64
-    Longitude float64  
+    Longitude float64
 	Timestamp    time.Time
 }
 
@@ -147,7 +147,8 @@ type MonitorRepository interface {
     FindActive(ctx context.Context) ([]*Monitor, error)
     // ADDED: Efficient batch lookup for the scheduler
     FindMany(ctx context.Context, ids []string) ([]*Monitor, error)
-    FindByJobID(ctx context.Context, jobID string) (*Monitor, error)
+    FindByJobID(ctx context.Context, monitorId string) (*Monitor, error)
+	FindByMonitorID(ctx context.Context, jobID string) (*Monitor, error)
     UpdateActive(ctx context.Context, id string, isActive bool) error
     DeductCredit(ctx context.Context, id string, tokenCost float64) error
     Delete(ctx context.Context, id string, ownerID int) error
