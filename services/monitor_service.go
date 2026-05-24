@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/everestp/depin-backend/config/env"
 	"github.com/everestp/depin-backend/db/repositories"
@@ -36,25 +37,38 @@ func NewMonitorService(store *repositories.Storage, rdb *redis.Client, rabbitCh 
 }
 
 func (s *monitorService) Create(ctx context.Context, ownerID int, req *dto.CreateMonitorRequest) (*dto.MonitorResponse, error) {
-	if req.TargetURL == "" {
-		return nil, errors.New("target_url is required")
-	}
-	interval := req.IntervalSeconds
-	if interval < 30 {
-		interval = 60
-	}
+    if req.TargetURL == "" {
+        return nil, errors.New("target_url is required")
+    }
+    interval := req.IntervalSeconds
+    if interval < 30 {
+        interval = 60
+    }
 
-	m, err := s.store.Monitors.Create(ctx, ownerID, req.TargetURL, interval)
-	if err != nil {
-		return nil, fmt.Errorf("create monitor: %w", err)
-	}
+    // 1. Create in DB
+    m, err := s.store.Monitors.Create(ctx, ownerID, req.TargetURL, interval)
+    if err != nil {
+        return nil, fmt.Errorf("create monitor: %w", err)
+    }
 
-	// Invalidate the Redis active monitor cache so the scheduler picks it up
-	s.rdb.Del(ctx, "cache:active_monitors")
+    // 2. Invalidate cache (as you are doing)
+    s.rdb.Del(ctx, "cache:active_monitors")
 
-	return toMonitorResponse(m), nil
+    // 3. ARM THE SCHEDULER: Immediately add to the ZSET
+    // Score = 0 means "run this immediately on the next tick"
+    err = s.rdb.ZAdd(ctx, "scheduler:due", redis.Z{
+        Score:  0,
+        Member: "sched:monitor:" + m.ID,
+    }).Err()
+
+    if err != nil {
+        // Log the error but perhaps don't fail the request,
+        // as the bootstrap logic will eventually pick it up on next restart
+        log.Printf("[error] failed to arm scheduler for monitor %s: %v", m.ID, err)
+    }
+
+    return toMonitorResponse(m), nil
 }
-
 func (s *monitorService) ListByOwner(ctx context.Context, ownerID int) ([]*dto.MonitorResponse, error) {
 	monitors, err := s.store.Monitors.FindByOwner(ctx, ownerID)
 	if err != nil {

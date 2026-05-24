@@ -27,6 +27,7 @@ import (
 
 type Application struct {
 	cfg        *env.Config
+	Rdb        *redis.Client
 	httpServer *http.Server
 	grpcServer *grpc.Server
 }
@@ -49,12 +50,11 @@ func New(cfg *env.Config) (*Application, error) {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 
-	// ── RabbitMQ Parent Connection Setup ───────────────────────────────────
+	// ── RabbitMQ ───────────────────────────────────────────────────────────
 	rabbitConn, err := amqp.Dial(cfg.RabbitMQURL)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq dial: %w", err)
 	}
-
 	rabbitCh, err := rabbitConn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq channel: %w", err)
@@ -63,94 +63,84 @@ func New(cfg *env.Config) (*Application, error) {
 		return nil, fmt.Errorf("declare queues: %w", err)
 	}
 
-	// ── Anti-cheat validator (shared by gRPC server + REST controller) ─────
-	validator := anticheat.NewValidator(rdb)
+	// ── Initialize App Instance ───────────────────────────────────────────
+	application := &Application{
+		cfg: cfg,
+		Rdb: rdb,
+	}
 
-	// ── Repositories ───────────────────────────────────────────────────────
+	// ── Bootstrap Scheduler ──────────────────────────────────────────────
 	store := repositories.NewStorage(pool)
+if err := services.SyncSchedulerState(ctx, rdb, store); err != nil {
+    return nil, fmt.Errorf("bootstrap scheduler: %w", err)
+}
 
-	// ── In-Memory DePIN Registry & Intelligent Matcher Engine ──────────────
-	// ADDED: Thread-safe cache instances map live node connections without hitting Postgres
+	// ── Services ───────────────────────────────────────────────────────────
+	validator := anticheat.NewValidator(rdb)
 	memRegistry := services.NewMemoryRegistry()
 	smartScheduler := services.NewSmartScheduler(memRegistry)
 
-	// ── Services ───────────────────────────────────────────────────────────
 	userSvc := services.NewUserService(store, cfg)
 	monitorSvc := services.NewMonitorService(store, rdb, rabbitCh, cfg)
-
-	// CRITICAL CHANGE: Pass memRegistry into runnerSvc so when gRPC streams receive
-	// heartbeats, they update our live localized coordinate pool inside memRegistry.
 	runnerSvc := services.NewRunnerService(store, rdb, rabbitCh, cfg, memRegistry)
-
 	rewardSvc := services.NewRewardService(store, rabbitCh, cfg)
 	pingLogSvc := services.NewPingLogService(store, pool)
 
 	// ── Controllers ────────────────────────────────────────────────────────
-	userCtrl := controllers.NewUserController(userSvc)
-	monitorCtrl := controllers.NewMonitorController(monitorSvc)
-	runnerCtrl := controllers.NewRunnerController(runnerSvc)
-	rewardCtrl := controllers.NewRewardController(rewardSvc)
-	pingCtrl := controllers.NewPingController(pingLogSvc, rabbitCh, validator)
+	r := router.New(cfg,
+		controllers.NewUserController(userSvc),
+		controllers.NewMonitorController(monitorSvc),
+		controllers.NewRunnerController(runnerSvc),
+		controllers.NewRewardController(rewardSvc),
+		controllers.NewPingController(pingLogSvc, rabbitCh, validator),
+	)
 
-	// ── HTTP ───────────────────────────────────────────────────────────────
-	r := router.New(cfg, userCtrl, monitorCtrl, runnerCtrl, rewardCtrl, pingCtrl)
-	httpSrv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+	application.httpServer = &http.Server{
+		Addr: ":" + cfg.Port, Handler: r,
+		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second,
 	}
+	application.grpcServer = grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitConn)
 
-	// ── gRPC — Wired with parent rabbitConn instead of static channel ──────
-	grpcSrv := grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitConn)
-
-	// ── Background workers ─────────────────────────────────────────────────
-	// CRITICAL CHANGE: We inject our new shared memory registry tracking instances
-	// directly into the background task distributor.
+	// ── Workers ────────────────────────────────────────────────────────────
 	workers.StartScheduler(ctx, rdb, pool, rabbitCh, memRegistry, smartScheduler)
 	workers.StartResultProcessor(ctx, pool, rabbitConn, pingLogSvc, rewardSvc)
 	workers.StartSolanaSync(ctx, pool, rabbitCh, cfg)
 	workers.StartPartitionCron(ctx, pool)
+	workers.StartSyncCron(ctx, pool, rdb) // Start the periodic sync
 
-	return &Application{
-		cfg:        cfg,
-		httpServer: httpSrv,
-		grpcServer: grpcSrv,
-	}, nil
+	return application, nil
+}
+
+func (a *Application) BootstrapScheduler(ctx context.Context, store *repositories.Storage) error {
+	monitors, err := store.Monitors.FindActive(ctx)
+	if err != nil {
+		return err
+	}
+
+	pipe := a.Rdb.Pipeline()
+	for _, m := range monitors {
+		pipe.ZAddNX(ctx, "scheduler:due", redis.Z{
+			Score:  float64(time.Now().Unix()),
+			Member: "sched:monitor:" + m.ID,
+		})
+	}
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func (a *Application) Run() error {
 	errCh := make(chan error, 2)
-
-	go func() {
-		fmt.Printf("HTTP  → :%s\n", a.cfg.Port)
-		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http: %w", err)
-		}
-	}()
-
+	go func() { if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed { errCh <- err } }()
 	go func() {
 		lis, err := net.Listen("tcp", ":"+a.cfg.GRPCPort)
-		if err != nil {
-			errCh <- fmt.Errorf("grpc listen: %w", err)
-			return
-		}
-		fmt.Printf("gRPC  → :%s\n", a.cfg.GRPCPort)
-		if err := a.grpcServer.Serve(lis); err != nil {
-			errCh <- fmt.Errorf("grpc: %w", err)
-		}
+		if err == nil { errCh <- a.grpcServer.Serve(lis) } else { errCh <- err }
 	}()
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case err := <-errCh:
-		return err
+	case err := <-errCh: return err
 	case <-quit:
-		fmt.Println("shutting down gracefully…")
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		a.grpcServer.GracefulStop()
 		return a.httpServer.Shutdown(ctx)
@@ -158,10 +148,8 @@ func (a *Application) Run() error {
 }
 
 func declareQueues(ch *amqp.Channel) error {
-	for _, q := range []string{"job_queue", "processing_queue", "solana_sync_queue","telegram_queue"} {
-		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
-			return fmt.Errorf("declare %s: %w", q, err)
-		}
+	for _, q := range []string{"job_queue", "processing_queue", "solana_sync_queue", "telegram_queue"} {
+		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil { return err }
 	}
 	return nil
 }

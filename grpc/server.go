@@ -52,7 +52,7 @@ func NewServer(
 			MaxConnectionAge:      30 * time.Minute,
 			MaxConnectionAgeGrace: 5 * time.Second,
 			Time:                  10 * time.Second,
-			Timeout:               3 * time.Second,
+			Timeout:               5 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,
