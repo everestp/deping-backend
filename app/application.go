@@ -158,7 +158,7 @@ func (a *Application) Run() error {
 }
 
 func declareQueues(ch *amqp.Channel) error {
-	for _, q := range []string{"job_queue", "processing_queue", "solana_sync_queue"} {
+	for _, q := range []string{"job_queue", "processing_queue", "solana_sync_queue","telegram_queue"} {
 		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
 			return fmt.Errorf("declare %s: %w", q, err)
 		}

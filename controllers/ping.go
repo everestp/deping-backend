@@ -157,6 +157,17 @@ func (c *PingController) SubmitResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := c.rabbitCh.PublishWithContext(ctx, "", "telegram_queue", false, false,
+		amqp.Publishing{
+			ContentType:  "application/json",
+			Body:         body,
+			DeliveryMode: amqp.Persistent,
+		},
+	); err != nil {
+		respondError(w, http.StatusServiceUnavailable, "queue unavailable")
+		return
+	}
+
 	respondJSON(w, http.StatusAccepted, dto.MessageResponse{Message: "results queued"})
 }
 
