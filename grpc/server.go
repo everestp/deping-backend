@@ -303,16 +303,20 @@ s.mu.RLock()
         return
     }
 
-    if err := ch.PublishWithContext(ctx, "", "processing_queue", false, false,
-        amqp.Publishing{
-            ContentType:  "application/json",
-            Body:         body,
-            DeliveryMode: amqp.Persistent,
-        },
-    ); err != nil {
-        log.Printf("[grpc] publish probe result error node_id=%s: %v", nodeID, err)
-        _ = ch.Close()
-    }
+  if err := ch.PublishWithContext(ctx,
+    "monitor_updates", // Publish to the FANOUT exchange
+    "",                // Routing key is empty for fanout
+    false,
+    false,
+    amqp.Publishing{
+        ContentType:  "application/json",
+        Body:         body,
+        DeliveryMode: amqp.Persistent,
+    },
+); err != nil {
+    log.Printf("[grpc] publish probe result error node_id=%s: %v", nodeID, err)
+    _ = ch.Close()
+}
 }
 // ── Job Dispatching Realignment ───────────────────────────────────────────
 

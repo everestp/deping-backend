@@ -148,8 +148,28 @@ func (a *Application) Run() error {
 }
 
 func declareQueues(ch *amqp.Channel) error {
-	for _, q := range []string{"job_queue", "processing_queue", "solana_sync_queue", "telegram_queue"} {
-		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil { return err }
-	}
-	return nil
+    // 1. Declare the queues (as you do now)
+    queues := []string{"job_queue", "processing_queue", "solana_sync_queue", "telegram_queue"}
+    for _, q := range queues {
+        if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
+            return err
+        }
+    }
+
+    // 2. Declare the Exchange
+    exchange := "monitor_updates"
+    if err := ch.ExchangeDeclare(exchange, "fanout", true, false, false, false, nil); err != nil {
+        return err
+    }
+
+    // 3. Bind the queues that need notifications to this exchange
+    // If you add a new service later, just add its queue name here!
+    targetQueues := []string{"processing_queue", "telegram_queue"}
+    for _, q := range targetQueues {
+        if err := ch.QueueBind(q, "", exchange, false, nil); err != nil {
+            return err
+        }
+    }
+
+    return nil
 }

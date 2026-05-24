@@ -146,27 +146,23 @@ func (c *PingController) SubmitResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := c.rabbitCh.PublishWithContext(ctx, "", "processing_queue", false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         body,
-			DeliveryMode: amqp.Persistent,
-		},
-	); err != nil {
-		respondError(w, http.StatusServiceUnavailable, "queue unavailable")
-		return
-	}
+	// Simplified publishing
+err = c.rabbitCh.PublishWithContext(ctx,
+    "monitor_updates", // PUBLISH TO THE EXCHANGE
+    "",                // routing key (ignored for fanout)
+    false,             // mandatory
+    false,             // immediate
+    amqp.Publishing{
+        ContentType:  "application/json",
+        Body:         body,
+        DeliveryMode: amqp.Persistent,
+    },
+)
 
-	if err := c.rabbitCh.PublishWithContext(ctx, "", "telegram_queue", false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         body,
-			DeliveryMode: amqp.Persistent,
-		},
-	); err != nil {
-		respondError(w, http.StatusServiceUnavailable, "queue unavailable")
-		return
-	}
+if err != nil {
+    respondError(w, http.StatusServiceUnavailable, "failed to publish notification")
+    return
+}
 
 	respondJSON(w, http.StatusAccepted, dto.MessageResponse{Message: "results queued"})
 }
