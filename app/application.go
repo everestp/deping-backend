@@ -130,7 +130,7 @@ func (a *Application) BootstrapScheduler(ctx context.Context, store *repositorie
 
 func (a *Application) Run() error {
 	errCh := make(chan error, 2)
-	go func() { if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed { errCh <- err } }()
+	// go func() { if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed { errCh <- err } }()
 	go func() {
 		lis, err := net.Listen("tcp", ":"+a.cfg.GRPCPort)
 		if err == nil { errCh <- a.grpcServer.Serve(lis) } else { errCh <- err }
