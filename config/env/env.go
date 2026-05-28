@@ -1,14 +1,15 @@
 package env
 
 import (
-	"encoding/hex"
+
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 
-	"github.com/joho/godotenv"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/base58"
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -73,14 +74,14 @@ func Load() *Config {
 // GetBackendPrivateKey converts your Hex private key seamlessly into the native
 // solana.PrivateKey layout object required by your queue worker.
 func (c *Config) GetBackendPrivateKey() (solana.PrivateKey, error) {
-	rawBytes, err := hex.DecodeString(c.BackendPrivateKeyHex)
+	rawBytes, err := base58.Decode(c.BackendPrivateKeyHex)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode private key hex string: %w", err)
+		return nil, fmt.Errorf("failed to decode base58 private key: %w", err)
 	}
 
-	// Solana private keys must be exactly 64 bytes (32-byte seed + 32-byte public key)
+	// Solana keypair must be 64 bytes
 	if len(rawBytes) != 64 {
-		return nil, fmt.Errorf("invalid solana private key byte length: got %d, expected 64", len(rawBytes))
+		return nil, fmt.Errorf("invalid solana private key length: got %d, expected 64", len(rawBytes))
 	}
 
 	return solana.PrivateKey(rawBytes), nil
