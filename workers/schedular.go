@@ -137,37 +137,37 @@ type monitorCacheEntry struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 }
 
-func cachedActiveMonitors(ctx context.Context, rdb *redis.Client, pool *pgxpool.Pool) ([]*monitorCacheEntry, error) {
-	const cacheKey = "cache:active_monitors"
+// func cachedActiveMonitors(ctx context.Context, rdb *redis.Client, pool *pgxpool.Pool) ([]*monitorCacheEntry, error) {
+// 	const cacheKey = "cache:active_monitors"
 
-	raw, err := rdb.Get(ctx, cacheKey).Bytes()
-	if err == nil {
-		var cached []*monitorCacheEntry
-		if jsonErr := json.Unmarshal(raw, &cached); jsonErr == nil {
-			return cached, nil
-		}
-	}
+// 	raw, err := rdb.Get(ctx, cacheKey).Bytes()
+// 	if err == nil {
+// 		var cached []*monitorCacheEntry
+// 		if jsonErr := json.Unmarshal(raw, &cached); jsonErr == nil {
+// 			return cached, nil
+// 		}
+// 	}
 
-	rows, err := pool.Query(ctx,
-		`SELECT id, target_url, check_interval_seconds
-         FROM monitors
-         WHERE is_active = TRUE AND deleted_at IS NULL AND credit_balance_checks > 0`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// 	rows, err := pool.Query(ctx,
+// 		`SELECT id, target_url, check_interval_seconds
+//          FROM monitors
+//          WHERE is_active = TRUE AND deleted_at IS NULL AND credit_balance_checks > 0`)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer rows.Close()
 
-	var monitors []*monitorCacheEntry
-	for rows.Next() {
-		m := &monitorCacheEntry{}
-		if err := rows.Scan(&m.ID, &m.TargetURL, &m.IntervalSeconds); err != nil {
-			return nil, err
-		}
-		monitors = append(monitors, m)
-	}
+// 	var monitors []*monitorCacheEntry
+// 	for rows.Next() {
+// 		m := &monitorCacheEntry{}
+// 		if err := rows.Scan(&m.ID, &m.TargetURL, &m.IntervalSeconds); err != nil {
+// 			return nil, err
+// 		}
+// 		monitors = append(monitors, m)
+// 	}
 
-	if body, err := json.Marshal(monitors); err == nil {
-		rdb.Set(ctx, cacheKey, body, 30*time.Second)
-	}
-	return monitors, rows.Err()
-}
+// 	if body, err := json.Marshal(monitors); err == nil {
+// 		rdb.Set(ctx, cacheKey, body, 30*time.Second)
+// 	}
+// 	return monitors, rows.Err()
+// }

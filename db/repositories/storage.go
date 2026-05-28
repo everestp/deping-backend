@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Storage is the single dependency injected into every service.
 type Storage struct {
 	pool       *pgxpool.Pool
 	Users      UserRepository
@@ -28,10 +28,6 @@ func NewStorage(pool *pgxpool.Pool) *Storage {
 	return s
 }
 
-// ── Atomic Multi-Table Settlement Transaction ──────────────────────────────
-
-// ProcessJobSettlement processes a safe transaction ensuring both sides update together.
-// It deducts credits from the monitor and pays out rewards to the runner node atomically.
 func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, runnerPubkey string, tokenCost float64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -39,12 +35,11 @@ func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, ru
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. Deduct dynamic credit fee from monitor profile
 	const monitorQ = `
-		UPDATE monitors
-		SET credit_balance_checks = credit_balance_checks - 1,
-		    total_spent_tokens = total_spent_tokens + $1
-		WHERE id = $2 AND credit_balance_checks > 0 AND is_active = TRUE AND deleted_at IS NULL`
+        UPDATE monitors
+        SET credit_balance_checks = credit_balance_checks - 1,
+            total_spent_tokens = total_spent_tokens + $1
+        WHERE id = $2 AND credit_balance_checks > 0 AND is_active = TRUE AND deleted_at IS NULL`
 
 	cmd, err := tx.Exec(ctx, monitorQ, tokenCost, monitorID)
 	if err != nil {
@@ -54,8 +49,7 @@ func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, ru
 		return fmt.Errorf("settlement rejected: monitor %s is inactive or out of credits", monitorID)
 	}
 
-	// 2. Accumulate reward to the runner node using your Postgres procedure
-	const runnerQ = `SELECT new_balance, did_sync FROM accumulate_runner_reward($1, $2, 1000.0000)`
+	const runnerQ = `SELECT new_balance, did_sync FROM accumulate_runner_reward($1, $2, 10.0000)`
 	var newBalance float64
 	var didSync bool
 
@@ -67,73 +61,74 @@ func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, ru
 	return tx.Commit(ctx)
 }
 
-// ── Domain models ──────────────────────────────────────────────────────────
+// ── Domain Models ──
 
 type User struct {
-	ID           int
-	Email        string
-	PasswordHash string
-	WalletPubkey string
-	CreatedAt    time.Time
+	ID           int       `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	WalletPubkey string    `json:"wallet_pubkey"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Monitor struct {
-	ID                   string
-	OwnerID              int
-	TargetURL            string
-	CheckIntervalSeconds int
-	CreditBalanceChecks  int64
-	TotalSpentTokens     float64
-	IsActive             bool
-	CreatedAt            time.Time
+	ID                   string    `json:"id"`
+	OwnerID              int       `json:"owner_id"`
+	TargetURL            string    `json:"target_url"`
+	CheckIntervalSeconds int       `json:"check_interval_seconds"`
+	CreditBalanceChecks  int64     `json:"credit_balance_checks"`
+	TotalSpentTokens     float64   `json:"total_spent_tokens"`
+	IsActive             bool      `json:"is_active"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type RunnerNode struct {
-	ID                        int
-	OwnerEmail                string
-	OwnerPubkey               string
-	Region                    string
-	Latitude                  float64
-	Longitude                 float64
-	OffchainAccumulatedTokens float64
-	TotalEarnedTokensAllTime  float64
-	PendingSolanaSync         bool
-	LastSeenTimestamp         time.Time
+	ID                        int       `json:"id"`
+	OwnerEmail                string    `json:"owner_email"`
+	OwnerPubkey               string    `json:"owner_pubkey"`
+	NodePubkey                *string   `json:"node_pubkey"`
+	Region                    string    `json:"region"`
+	Latitude                  float64   `json:"latitude"`
+	Longitude                 float64   `json:"longitude"`
+	OffchainAccumulatedTokens float64   `json:"offchain_accumulated_tokens"`
+	TotalEarnedTokensAllTime  float64   `json:"total_earned_tokens_all_time"`
+	PendingSolanaSync         bool      `json:"pending_solana_sync"`
+	LastSeenTimestamp         time.Time `json:"last_seen_timestamp"`
 }
 
 type PingLog struct {
-	ID           int64
-	MonitorID    string
-	RunnerPubkey string
-	DnsUs        uint64
-	TcpUs        uint64
-	TlsUs        uint64
-	TtfbUs       uint64
-	TotalUs      uint64
-	LatencyMs    int
-	StatusCode   int
-	Success      bool
-	ErrorKind    string
-	GeoRegion    string
-	Latitude  float64
-    Longitude float64
-	Timestamp    time.Time
+	ID           int64     `json:"id"`
+	MonitorID    string    `json:"monitor_id"`
+	RunnerPubkey string    `json:"runner_pubkey"`
+	DnsUs        uint64    `json:"dns_us"`
+	TcpUs        uint64    `json:"tcp_us"`
+	TlsUs        uint64    `json:"tls_us"`
+	TtfbUs       uint64    `json:"ttfb_us"`
+	TotalUs      uint64    `json:"total_us"`
+	LatencyMs    float64   `json:"latency_ms"`
+	StatusCode   int       `json:"status_code"`
+	Success      bool      `json:"success"`
+	ErrorKind    string    `json:"error_kind"`
+	GeoRegion    string    `json:"geo_region"`
+	Latitude     float64   `json:"latitude"`
+	Longitude    float64   `json:"longitude"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 type SolanaSyncEvent struct {
-	ID           int
-	RunnerPubkey string
-	TxSignature  string
-	AmountRaw    int64
-	ConfirmedAt  time.Time
+	ID           int       `json:"id"`
+	RunnerPubkey string    `json:"runner_pubkey"`
+	TxSignature  string    `json:"tx_signature"`
+	AmountRaw    int64     `json:"amount_raw"`
+	ConfirmedAt  time.Time `json:"confirmed_at"`
 }
 
 type AccumulateResult struct {
-	NewBalance float64
-	DidSync    bool
+	NewBalance float64 `json:"new_balance"`
+	DidSync    bool    `json:"did_sync"`
 }
 
-// ── Repository interfaces ──────────────────────────────────────────────────
+// ── Interfaces ──
 
 type UserRepository interface {
 	Create(ctx context.Context, email, passwordHash, walletPubkey string) (*User, error)
@@ -142,22 +137,19 @@ type UserRepository interface {
 }
 
 type MonitorRepository interface {
-    Create(ctx context.Context, ownerID int, targetURL string, intervalSeconds int) (*Monitor, error)
-    FindByOwner(ctx context.Context, ownerID int) ([]*Monitor, error)
-    FindActive(ctx context.Context) ([]*Monitor, error)
-    // ADDED: Efficient batch lookup for the scheduler
-    FindMany(ctx context.Context, ids []string) ([]*Monitor, error)
-    FindByJobID(ctx context.Context, monitorId string) (*Monitor, error)
-	FindByMonitorID(ctx context.Context, jobID string) (*Monitor, error)
-    UpdateActive(ctx context.Context, id string, isActive bool) error
-    DeductCredit(ctx context.Context, id string, tokenCost float64) error
-    Delete(ctx context.Context, id string, ownerID int) error
+	Create(ctx context.Context, ownerID int, targetURL string, intervalSeconds int) (*Monitor, error)
+	FindByOwner(ctx context.Context, ownerID int) ([]*Monitor, error)
+	FindActive(ctx context.Context) ([]*Monitor, error)
+	FindMany(ctx context.Context, ids []string) ([]*Monitor, error)
+	FindByMonitorID(ctx context.Context, monitorId string) (*Monitor, error)
+	UpdateActive(ctx context.Context, id string, isActive bool) error
+	DeductCredit(ctx context.Context, id string, tokenCost float64) error
+	Delete(ctx context.Context, id string, ownerID int) error
 }
 
 type RunnerRepository interface {
 	Register(ctx context.Context, ownerEmail, ownerPubkey, region string, lat, lng float64) (*RunnerNode, error)
 	FindByPubkey(ctx context.Context, pubkey string) (*RunnerNode, error)
-	// ADDED: For frontend lookup binding matching JWT email identity + Phantom pubkey
 	FindByEmailAndPubkey(ctx context.Context, email, pubkey string) ([]*RunnerNode, error)
 	UpdateHeartbeat(ctx context.Context, pubkey string) error
 	AccumulateReward(ctx context.Context, pubkey string, delta, threshold float64) (*AccumulateResult, error)

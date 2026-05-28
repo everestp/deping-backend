@@ -1,7 +1,7 @@
 package services
 
 import (
-	"math"
+
 	"net/url"
 	"strings"
 	"sync"
@@ -84,19 +84,19 @@ func (r *MemoryRegistry) startEvictionLoop(interval time.Duration) {
 	}
 }
 
-func calculateDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusKm = 6371.0
-	dLat := (lat2 - lat1) * math.Pi / 180.0
-	dLon := (lon2 - lon1) * math.Pi / 180.0
+// func calculateDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {
+// 	const earthRadiusKm = 6371.0
+// 	dLat := (lat2 - lat1) * math.Pi / 180.0
+// 	dLon := (lon2 - lon1) * math.Pi / 180.0
 
-	radLat1 := lat1 * math.Pi / 180.0
-	radLat2 := lat2 * math.Pi / 180.0
+// 	radLat1 := lat1 * math.Pi / 180.0
+// 	radLat2 := lat2 * math.Pi / 180.0
 
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(radLat1)*math.Cos(radLat2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	return earthRadiusKm * c
-}
+// 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+// 		math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(radLat1)*math.Cos(radLat2)
+// 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+// 	return earthRadiusKm * c
+// }
 
 func cleanDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)

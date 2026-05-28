@@ -13,16 +13,20 @@ import (
 	"github.com/everestp/depin-backend/dto"
 )
 
-// ── ResultPacket ───────────────────────────────────────────────────────────
+// ================================================================================================================
+//                                              DATA TRANSFERS / SCHEMA
+// ================================================================================================================
 
-// ResultPacket represents the fully detailed JSON structure passed through RabbitMQ queues
+// ResultPacket represents the fully detailed JSON structure passed through RabbitMQ queues.
 type ResultPacket struct {
 	RunnerPubkey string               `json:"runner_pubkey"`
 	Signature    string               `json:"signature"`
-	Results      []dto.PingResultItem `json:"results"` // 🚀 Points directly to the comprehensive DTO schema definition
+	Results      []dto.PingResultItem `json:"results"` // Points directly to the comprehensive DTO schema definition
 }
 
-// ── PingLogService ─────────────────────────────────────────────────────────
+// ================================================================================================================
+//                                              SERVICE CONTRACTS
+// ================================================================================================================
 
 type PingLogService interface {
 	ProcessPacket(ctx context.Context, packet *ResultPacket) (totalDelta float64, err error)
@@ -39,7 +43,11 @@ func NewPingLogService(store *repositories.Storage, pool *pgxpool.Pool) PingLogS
 	return &pingLogService{store: store, pool: pool}
 }
 
-// ProcessPacket converts ProbeRecords, inserts logs, and settles payments ATOMICALLY
+// ================================================================================================================
+//                                            CORE LOGIC PROCESSING
+// ================================================================================================================
+
+// ProcessPacket converts ProbeRecords, inserts logs, and settles payments ATOMICALLY.
 func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket) (float64, error) {
 	if len(packet.Results) == 0 {
 		return 0, nil
@@ -53,18 +61,9 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 		r := &packet.Results[idx]
 		monitorID := r.MonitorID
 
-		// 1. Core Verification Phase
-		if monitorID == "" && r.JobID != "" {
-			m, err := s.store.Monitors.FindByJobID(ctx, r.JobID)
-			if err != nil {
-				log.Printf("[processor] warning: skipping unknown job validation frame (ID: %s): %v", r.JobID, err)
-				continue
-			}
-			monitorID = m.ID
-		}
-
-		// Fail-safe protection if both inputs map completely empty properties
+		// 1. Core Verification Phase (MonitorID is the absolute final source of truth)
 		if monitorID == "" {
+			log.Printf("[processor] warning: dropping packet item. MonitorID must be supplied as final source of truth.")
 			continue
 		}
 
@@ -89,27 +88,27 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 			ts = time.UnixMilli(r.TimestampMs)
 		}
 
-		latencyMs := r.LatencyMs
+		latencyMs := float64(r.LatencyMs)
 		if latencyMs == 0 && r.TotalUs > 0 {
-			latencyMs = int(r.TotalUs / 1000)
+			latencyMs = float64(r.TotalUs) / 1000.0
 		}
 
 		logEntry := &repositories.PingLog{
 			MonitorID:    monitorID,
 			RunnerPubkey: packet.RunnerPubkey,
-			DnsUs:        uint64(r.DnsUs), // ✅ int64 → uint64 cast, safe for positive durations
+			DnsUs:        uint64(r.DnsUs),
 			TcpUs:        uint64(r.TcpUs),
 			TlsUs:        uint64(r.TlsUs),
 			TtfbUs:       uint64(r.TtfbUs),
 			TotalUs:      uint64(r.TotalUs),
-			LatencyMs:    r.LatencyMs,
+			LatencyMs:    latencyMs,
 			StatusCode:   r.StatusCode,
 			Success:      r.Success,
 			ErrorKind:    r.ErrorKind,
 			GeoRegion:    r.GeoRegion,
 			Timestamp:    ts,
 			Latitude:     r.Latitude,
-            Longitude:    r.Longitude,
+			Longitude:    r.Longitude,
 		}
 
 		logsToInsert = append(logsToInsert, logEntry)
@@ -134,13 +133,15 @@ func (s *pingLogService) AvgLatencyUs(ctx context.Context, monitorID string, sin
 	return s.store.PingLogs.AvgLatencyUs(ctx, monitorID, since)
 }
 
-// ── REST path helper ───────────────────────────────────────────────────────
+// ================================================================================================================
+//                                              SERIALIZATION HELPERS
+// ================================================================================================================
 
-// MarshalResultPacket cleanly preserves every single detailed microsecond and error tracking field for RabbitMQ
+// MarshalResultPacket cleanly preserves every single detailed microsecond and error tracking field for RabbitMQ.
 func MarshalResultPacket(req *dto.SubmitResultsRequest) ([]byte, error) {
 	return json.Marshal(ResultPacket{
 		RunnerPubkey: req.RunnerPubkey,
 		Signature:    req.Signature,
-		Results:      req.Results, // 🎯 High-fidelity pass-through: retains all rich microsecond latency metrics!
+		Results:      req.Results, // High-fidelity pass-through: retains all rich microsecond latency metrics!
 	})
 }
