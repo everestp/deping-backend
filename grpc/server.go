@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"io"
@@ -283,15 +284,15 @@ func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID str
         return
     }
 
- // 🛡️ LAYER 2: VERIFY PAYLOAD SIGNATURE
+//  🛡️ LAYER 2: VERIFY PAYLOAD SIGNATURE
 // Construct the exact string used in Rust: job_id + task_nonce
-// signableData := fmt.Sprintf("%s%s", r.JobId, r.TaskNonce)
+signableData := fmt.Sprintf("%s%s", r.JobId, r.TaskNonce)
 
-// // Pass r.Signature as []byte directly (no hex.EncodeToString)
-// if err := s.validator.VerifySignature(nodeID, signableData, r.Signature); err != nil {
-//     log.Printf("[grpc] SECURITY ALERT: invalid payload signature node_id=%s job_id=%s error=%v", nodeID, r.JobId, err)
-//     return
-// }
+// Pass r.Signature as []byte directly (no hex.EncodeToString)
+if err := s.validator.VerifySignature(nodeID, signableData, r.Signature); err != nil {
+    log.Printf("[grpc] SECURITY ALERT: invalid payload signature node_id=%s job_id=%s error=%v", nodeID, r.JobId, err)
+    return
+}
 
     // Existing integrity checks
     if err := s.validator.CheckRateLimit(context.Background(), nodeID, 600); err != nil {
