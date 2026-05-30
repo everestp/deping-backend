@@ -83,17 +83,28 @@ type Monitor struct {
 }
 
 type RunnerNode struct {
-	ID                        int       `json:"id"`
-	OwnerEmail                string    `json:"owner_email"`
-	OwnerPubkey               string    `json:"owner_pubkey"`
-	NodePubkey                *string   `json:"node_pubkey"`
-	Region                    string    `json:"region"`
-	Latitude                  float64   `json:"latitude"`
-	Longitude                 float64   `json:"longitude"`
-	OffchainAccumulatedTokens float64   `json:"offchain_accumulated_tokens"`
-	TotalEarnedTokensAllTime  float64   `json:"total_earned_tokens_all_time"`
-	PendingSolanaSync         bool      `json:"pending_solana_sync"`
-	LastSeenTimestamp         time.Time `json:"last_seen_timestamp"`
+	ID                        int        `json:"id"`
+	OwnerEmail                string     `json:"owner_email"`
+	OwnerPubkey               string     `json:"owner_pubkey"`
+	NodePubkey                *string    `json:"node_pubkey"`
+
+	Region                    string     `json:"region"`
+	Latitude                  float64    `json:"latitude"`
+	Longitude                 float64    `json:"longitude"`
+
+	OffchainAccumulatedTokens float64    `json:"offchain_accumulated_tokens"`
+	TotalEarnedTokensAllTime  float64    `json:"total_earned_tokens_all_time"`
+
+	PendingSolanaSync         bool       `json:"pending_solana_sync"`
+	LastSeenTimestamp         time.Time  `json:"last_seen_timestamp"`
+
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
+	DeletedAt                 *time.Time `json:"deleted_at"`
+
+	IsValidator               bool       `json:"is_validator"`
+	StakedAmount              float64    `json:"staked_amount"`
+	UnstakeRequestAt          *time.Time `json:"unstake_request_at"`
 }
 
 type PingLog struct {

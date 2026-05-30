@@ -17,25 +17,87 @@ func NewRunnerRepository(pool *pgxpool.Pool) RunnerRepository {
 }
 
 // Register inserts a new runner node or updates an existing one on key public key conflicts.
-func (r *runnerRepo) Register(ctx context.Context, ownerEmail, ownerPubkey, region string, lat, lng float64) (*RunnerNode, error) {
+func (r *runnerRepo) Register(
+	ctx context.Context,
+	ownerEmail,
+	ownerPubkey,
+	region string,
+	lat,
+	lng float64,
+) (*RunnerNode, error) {
+
 	const q = `
-        INSERT INTO runner_nodes (owner_email, owner_pubkey, region, latitude, longitude)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (owner_pubkey) DO UPDATE
-          SET last_seen_timestamp = NOW(), region = EXCLUDED.region,
-              latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-        RETURNING id, owner_email, owner_pubkey, node_pubkey, region, latitude, longitude,
-                  offchain_accumulated_tokens, total_earned_tokens_all_time,
-                  pending_solana_sync, last_seen_timestamp`
+		INSERT INTO runner_nodes (
+			owner_email,
+			owner_pubkey,
+			region,
+			latitude,
+			longitude
+		)
+		VALUES ($1, $2, $3, $4, $5)
+
+		ON CONFLICT (owner_pubkey)
+		DO UPDATE SET
+			last_seen_timestamp = NOW(),
+			region = EXCLUDED.region,
+			latitude = EXCLUDED.latitude,
+			longitude = EXCLUDED.longitude,
+			updated_at = NOW()
+
+		RETURNING
+			id,
+			owner_email,
+			owner_pubkey,
+			node_pubkey,
+			region,
+			latitude,
+			longitude,
+			offchain_accumulated_tokens,
+			total_earned_tokens_all_time,
+			pending_solana_sync,
+			last_seen_timestamp,
+			created_at,
+			updated_at,
+			deleted_at,
+			is_validator,
+			staked_amount,
+			unstake_request_at
+	`
 
 	n := &RunnerNode{}
-	err := r.pool.QueryRow(ctx, q, ownerEmail, ownerPubkey, region, lat, lng).
-		Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.NodePubkey, &n.Region, &n.Latitude, &n.Longitude,
-			&n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
-			&n.PendingSolanaSync, &n.LastSeenTimestamp)
+
+	err := r.pool.QueryRow(
+		ctx,
+		q,
+		ownerEmail,
+		ownerPubkey,
+		region,
+		lat,
+		lng,
+	).Scan(
+		&n.ID,
+		&n.OwnerEmail,
+		&n.OwnerPubkey,
+		&n.NodePubkey,
+		&n.Region,
+		&n.Latitude,
+		&n.Longitude,
+		&n.OffchainAccumulatedTokens,
+		&n.TotalEarnedTokensAllTime,
+		&n.PendingSolanaSync,
+		&n.LastSeenTimestamp,
+		&n.CreatedAt,
+		&n.UpdatedAt,
+		&n.DeletedAt,
+		&n.IsValidator,
+		&n.StakedAmount,
+		&n.UnstakeRequestAt,
+	)
+
 	if err != nil {
 		return nil, fmt.Errorf("runnerRepo.Register: %w", err)
 	}
+
 	return n, nil
 }
 

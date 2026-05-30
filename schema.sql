@@ -27,6 +27,7 @@ CREATE TABLE runner_nodes (
     id                           SERIAL PRIMARY KEY,
     owner_email                  VARCHAR(255) REFERENCES users(email),
     owner_pubkey                 VARCHAR(128) NOT NULL,  -- ed25519 hex pubkey
+     node_pubkey                 VARCHAR(128) NOT NULL,
     region                       VARCHAR(20)  NOT NULL DEFAULT 'unknown',
     latitude                     NUMERIC(9,6) NOT NULL,
     longitude                    NUMERIC(9,6) NOT NULL,
