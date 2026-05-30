@@ -6,24 +6,27 @@ option go_package = "grpc/pb;pb";
 
 // ─── Service Definition ────────────────────────────────────────────────────
 service MonitorService {
-  // Bidirectional streaming RPC. The miner sends MinerMessages (register, ping,
-  // probe results) and the Go gateway sends ServerMessages (pong, job batches).
   rpc JobStream(stream MinerMessage) returns (stream ServerMessage);
 }
 
-// ─── Miner → Server ───────────────────────────────────────────────────────
+// ─── Miner → Server (Upstream) ─────────────────────────────────────────────
 message MinerMessage {
   oneof payload {
-    MinerRegister register = 1;
-    Ping          ping     = 2;
-    ProbeResult   result   = 3;
+    MinerRegister register      = 1;
+    Ping          ping          = 2;
+    ProbeResult   result        = 3;
+    AuthResponse  auth_response = 4;
   }
 }
 
 message MinerRegister {
-  string node_id      = 1;  // ed25519 public key hex or Solana wallet pubkey
-  string version      = 2;  // semver string, e.g. "0.1.0"
+  string node_id      = 1;
+  string version      = 2;
   uint64 timestamp_ms = 3;
+}
+
+message AuthResponse {
+  bytes signature = 1; // Miner signs the challenge nonce
 }
 
 message Ping {
@@ -31,12 +34,17 @@ message Ping {
   string node_id      = 2;
 }
 
-// ─── Server → Miner ───────────────────────────────────────────────────────
+// ─── Server → Miner (Downstream) ───────────────────────────────────────────
 message ServerMessage {
   oneof payload {
-    Pong     pong      = 1;
-    JobBatch job_batch = 2;
+    Pong          pong          = 1;
+    JobBatch      job_batch     = 2;
+    AuthChallenge auth_challenge = 3;
   }
+}
+
+message AuthChallenge {
+  string nonce = 1; // Random hex string for handshake
 }
 
 message Pong {
@@ -50,9 +58,10 @@ message JobBatch {
 }
 
 message Job {
-  string job_id     = 1;  // UUID
-  string target_url = 2;  // fully qualified, e.g. "https://example.com/health"
-  uint32 timeout_ms = 3;  // per-probe wall-clock ceiling
+  string job_id     = 1;
+  string target_url = 2;
+  uint32 timeout_ms = 3;
+  string task_nonce = 4; // Required for signature verification
 }
 
 // ─── Probe Result (Miner → Server) ────────────────────────────────────────
@@ -62,16 +71,19 @@ message ProbeResult {
   string node_id     = 3;
   string target_url  = 4;
   bool   success     = 5;
-  uint32 status_code = 6;  // 0 when connection never established
+  uint32 status_code = 6;
 
-  // Phase latencies in microseconds for sub-millisecond precision
   uint64 dns_us   = 7;
   uint64 tcp_us   = 8;
-  uint64 tls_us   = 9;   // 0 for plain HTTP
+  uint64 tls_us   = 9;
   uint64 ttfb_us  = 10;
   uint64 total_us = 11;
 
-  string error_kind   = 12; // empty on success; enum-like string from Rust
+  string error_kind   = 12;
   string error_msg    = 13;
   uint64 timestamp_ms = 14;
+
+  // 🛡️ SECURITY FIELDS: Must be signed by the miner
+  string task_nonce = 15; // Ensure this index is 15 in both projects
+  bytes  signature  = 16; // Ensure this index is 16 in both projects
 }

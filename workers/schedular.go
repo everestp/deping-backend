@@ -8,22 +8,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/everestp/depin-backend/db/repositories"
+	
 	"github.com/everestp/depin-backend/services"
 )
 
 // JobPayload is what the Rust miner receives from job_queue.
 type JobPayload struct {
-	JobID        string `json:"job_id"`        // nonce — validated on result submission
-	MonitorID    string `json:"monitor_id"`
-	TargetURL    string `json:"target_url"`
-	RunnerPubkey string `json:"runner_pubkey"` // Added: Explicitly targets a specific streaming node
-	IssuedAt     int64  `json:"issued_at"`
-	ExpiresAt    int64  `json:"expires_at"`    // Unix — nonce invalid after this
+    JobID        string `json:"job_id"`
+    MonitorID    string `json:"monitor_id"`
+    TargetURL    string `json:"target_url"`
+    RunnerPubkey string `json:"runner_pubkey"`
+    TaskNonce    string `json:"task_nonce"` // 👈 REQUIRED: The dynamic proof-of-work secret
+    IssuedAt     int64  `json:"issued_at"`
+    ExpiresAt    int64  `json:"expires_at"`
 }
 
 // StartScheduler runs the Redis-backed scheduler in the background.
@@ -56,86 +59,130 @@ func StartScheduler(
 }
 
 func scheduleTick(
-	ctx context.Context,
-	rdb *redis.Client,
-	pool *pgxpool.Pool,
-	rabbitCh *amqp.Channel,
-	reg *services.MemoryRegistry,
-	sched *services.SmartScheduler,
+    ctx context.Context,
+    rdb *redis.Client,
+    pool *pgxpool.Pool,
+    rabbitCh *amqp.Channel,
+    reg *services.MemoryRegistry,
+    sched *services.SmartScheduler,
 ) error {
-	now := time.Now().Unix()
+    now := time.Now().Unix()
 
-	// 1. Get due members (using your ZSET logic)
-	dueMembers, err := rdb.ZRangeByScore(ctx, "scheduler:due", &redis.ZRangeBy{
-		Min: "-inf", Max: fmt.Sprintf("%d", now), Offset: 0, Count: 100,
-	}).Result()
-	if err != nil || len(dueMembers) == 0 {
-		return nil
-	}
-
-	// 2. Map members to Monitor IDs
-    monitorIDs := make([]string, 0, len(dueMembers))
-    for _, m := range dueMembers {
-        // Change "monitor:" to "sched:monitor:" to match your error logs
-        id := strings.TrimPrefix(m, "sched:monitor:")
-        monitorIDs = append(monitorIDs, id)
+    // 1. Get due members
+    dueMembers, err := rdb.ZRangeByScore(ctx, "scheduler:due", &redis.ZRangeBy{
+        Min: "-inf", Max: fmt.Sprintf("%d", now), Offset: 0, Count: 100,
+    }).Result()
+    if err != nil || len(dueMembers) == 0 {
+        return nil
     }
 
-	// 3. Batch fetch monitor details
-	repo := repositories.NewStorage(pool) // Ensure you have access to this
-	monitors, err := repo.Monitors.FindMany(ctx, monitorIDs)
-	if err != nil {
-		return err
-	}
+    // 2. Identify Monitor IDs
+    monitorIDs := make([]string, 0, len(dueMembers))
+    for _, m := range dueMembers {
+        monitorIDs = append(monitorIDs, strings.TrimPrefix(m, "sched:monitor:"))
+    }
 
-	// 4. Handle "Ghost" monitors: If a monitor was in ZSET but not in DB, remove it
-	foundIDs := make(map[string]bool)
-	for _, m := range monitors {
-		foundIDs[m.ID] = true
-	}
-for _, m := range dueMembers {
-        // Change "monitor:" to "sched:monitor:" here too
-        id := strings.TrimPrefix(m, "sched:monitor:")
-        if !foundIDs[id] {
-            rdb.ZRem(ctx, "scheduler:due", m)
+    // 3. Fetch monitors
+    repo := repositories.NewStorage(pool)
+    monitors, err := repo.Monitors.FindMany(ctx, monitorIDs)
+    if err != nil {
+        return err
+    }
+
+    // 4. Cleanup Ghost Monitors
+    foundMap := make(map[string]any) // Map for quick access
+    for _, m := range monitors {
+        foundMap[m.ID] = m
+    }
+
+    for _, mKey := range dueMembers {
+        id := strings.TrimPrefix(mKey, "sched:monitor:")
+        if _, exists := foundMap[id]; !exists {
+            rdb.ZRem(ctx, "scheduler:due", mKey)
         }
     }
 
-	// 5. Batch Dispatch
-	assignments := sched.MatchBatch(monitors)
-	for pubkey, m := range assignments {
-		// Calculate next run time
-		nextDue := float64(now + int64(m.CheckIntervalSeconds))
+    // 5. Batch Dispatch
+    assignments := sched.MatchBatch(monitors)
 
-		// Update ZSET immediately to prevent duplicate scheduling if this tick is slow
-		rdb.ZAdd(ctx, "scheduler:due", redis.Z{
-    Score: nextDue,
-    Member: "sched:monitor:" + m.ID, // Match the prefix!
-})
+    // Track which monitors were actually processed so we can reschedule them
+    processedIDs := make(map[string]bool)
 
-		// 6. Build and publish payload
-		jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
-		rdb.Set(ctx, "nonce:"+jobID, "1", 15*time.Minute)
+    for pubkey, m := range assignments {
+        processedIDs[m.ID] = true
 
-		payload := JobPayload{
-			JobID: jobID, MonitorID: m.ID, TargetURL: m.TargetURL,
-			RunnerPubkey: pubkey, IssuedAt: now,
-			ExpiresAt: now + int64(m.CheckIntervalSeconds*2),
-		}
-		body, _ := json.Marshal(payload)
+        // Calculate next run time based on the interval
+        nextDue := float64(now + int64(m.CheckIntervalSeconds))
 
-		_ = rabbitCh.PublishWithContext(ctx, "", "job_queue", false, false, amqp.Publishing{
-			ContentType: "application/json", Body: body, DeliveryMode: amqp.Persistent,
-		})
-	}
+        // Update ZSET: This sets the new time for the next check
+        rdb.ZAdd(ctx, "scheduler:due", redis.Z{
+            Score:  nextDue,
+            Member: "sched:monitor:" + m.ID,
+        })
 
-	return nil
+        // 6. Nonce and Publish
+        taskNonce := uuid.New().String()
+        jobID := fmt.Sprintf("%s:%s:%d", m.ID, pubkey, now)
+
+        rdb.Set(ctx, "task_nonce:"+taskNonce, "1", 15*time.Minute)
+
+        payload := JobPayload{
+            JobID:        jobID,
+            MonitorID:    m.ID,
+            TargetURL:    m.TargetURL,
+            RunnerPubkey: pubkey,
+            TaskNonce:    taskNonce,
+            IssuedAt:     now,
+            ExpiresAt:    now + int64(m.CheckIntervalSeconds*2),
+        }
+
+        body, _ := json.Marshal(payload)
+        rabbitCh.PublishWithContext(ctx, "", "job_queue", false, false, amqp.Publishing{
+            ContentType: "application/json", Body: body, DeliveryMode: amqp.Persistent,
+        })
+    }
+
+    // 7. Critical: Reschedule monitors that were "Due" but not assigned in this batch
+    // This prevents monitors from getting stuck if the scheduler skips them
+    for _, m := range monitors {
+        if !processedIDs[m.ID] {
+            rdb.ZAdd(ctx, "scheduler:due", redis.Z{
+                Score:  float64(now + int64(m.CheckIntervalSeconds)),
+                Member: "sched:monitor:" + m.ID,
+            })
+        }
+    }
+
+    return nil
 }
-type monitorCacheEntry struct {
-	ID              string `json:"id"`
-	TargetURL       string `json:"target_url"`
-	IntervalSeconds int    `json:"interval_seconds"`
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// type monitorCacheEntry struct {
+// 	ID              string `json:"id"`
+// 	TargetURL       string `json:"target_url"`
+// 	IntervalSeconds int    `json:"interval_seconds"`
+// }
 
 // func cachedActiveMonitors(ctx context.Context, rdb *redis.Client, pool *pgxpool.Pool) ([]*monitorCacheEntry, error) {
 // 	const cacheKey = "cache:active_monitors"

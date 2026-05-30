@@ -28,8 +28,6 @@ const (
 //
 // ─── Service Definition ────────────────────────────────────────────────────
 type MonitorServiceClient interface {
-	// Bidirectional streaming RPC. The miner sends MinerMessages (register, ping,
-	// probe results) and the Go gateway sends ServerMessages (pong, job batches).
 	JobStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[MinerMessage, ServerMessage], error)
 }
 
@@ -60,8 +58,6 @@ type MonitorService_JobStreamClient = grpc.BidiStreamingClient[MinerMessage, Ser
 //
 // ─── Service Definition ────────────────────────────────────────────────────
 type MonitorServiceServer interface {
-	// Bidirectional streaming RPC. The miner sends MinerMessages (register, ping,
-	// probe results) and the Go gateway sends ServerMessages (pong, job batches).
 	JobStream(grpc.BidiStreamingServer[MinerMessage, ServerMessage]) error
 	mustEmbedUnimplementedMonitorServiceServer()
 }

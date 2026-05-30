@@ -129,7 +129,7 @@ func (c *PingController) SubmitResults(w http.ResponseWriter, r *http.Request) {
 	// (same behaviour as gRPC path — we don't fail the whole batch)
 	validResults := req.Results[:0]
 	for _, res := range req.Results {
-		if err := c.validator.ValidateJobID(ctx, res.JobID); err != nil {
+		if err := c.validator.ValidateTaskNonce(ctx, res.JobID); err != nil {
 			continue // nonce expired, consumed, or fabricated — skip
 		}
 		validResults = append(validResults, res)

@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// ─── Miner → Server ───────────────────────────────────────────────────────
+// ─── Miner → Server (Upstream) ─────────────────────────────────────────────
 type MinerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -29,6 +29,7 @@ type MinerMessage struct {
 	//	*MinerMessage_Register
 	//	*MinerMessage_Ping
 	//	*MinerMessage_Result
+	//	*MinerMessage_AuthResponse
 	Payload       isMinerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -98,6 +99,15 @@ func (x *MinerMessage) GetResult() *ProbeResult {
 	return nil
 }
 
+func (x *MinerMessage) GetAuthResponse() *AuthResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*MinerMessage_AuthResponse); ok {
+			return x.AuthResponse
+		}
+	}
+	return nil
+}
+
 type isMinerMessage_Payload interface {
 	isMinerMessage_Payload()
 }
@@ -114,16 +124,22 @@ type MinerMessage_Result struct {
 	Result *ProbeResult `protobuf:"bytes,3,opt,name=result,proto3,oneof"`
 }
 
+type MinerMessage_AuthResponse struct {
+	AuthResponse *AuthResponse `protobuf:"bytes,4,opt,name=auth_response,json=authResponse,proto3,oneof"`
+}
+
 func (*MinerMessage_Register) isMinerMessage_Payload() {}
 
 func (*MinerMessage_Ping) isMinerMessage_Payload() {}
 
 func (*MinerMessage_Result) isMinerMessage_Payload() {}
 
+func (*MinerMessage_AuthResponse) isMinerMessage_Payload() {}
+
 type MinerRegister struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // ed25519 public key hex or Solana wallet pubkey
-	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`             // semver string, e.g. "0.1.0"
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	TimestampMs   uint64                 `protobuf:"varint,3,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -180,6 +196,50 @@ func (x *MinerRegister) GetTimestampMs() uint64 {
 	return 0
 }
 
+type AuthResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signature     []byte                 `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"` // Miner signs the challenge nonce
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthResponse) Reset() {
+	*x = AuthResponse{}
+	mi := &file_proto_monitor_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthResponse) ProtoMessage() {}
+
+func (x *AuthResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_monitor_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthResponse.ProtoReflect.Descriptor instead.
+func (*AuthResponse) Descriptor() ([]byte, []int) {
+	return file_proto_monitor_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AuthResponse) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 type Ping struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TimestampMs   uint64                 `protobuf:"varint,1,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
@@ -190,7 +250,7 @@ type Ping struct {
 
 func (x *Ping) Reset() {
 	*x = Ping{}
-	mi := &file_proto_monitor_proto_msgTypes[2]
+	mi := &file_proto_monitor_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -202,7 +262,7 @@ func (x *Ping) String() string {
 func (*Ping) ProtoMessage() {}
 
 func (x *Ping) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[2]
+	mi := &file_proto_monitor_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -215,7 +275,7 @@ func (x *Ping) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ping.ProtoReflect.Descriptor instead.
 func (*Ping) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{2}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Ping) GetTimestampMs() uint64 {
@@ -232,13 +292,14 @@ func (x *Ping) GetNodeId() string {
 	return ""
 }
 
-// ─── Server → Miner ───────────────────────────────────────────────────────
+// ─── Server → Miner (Downstream) ───────────────────────────────────────────
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*ServerMessage_Pong
 	//	*ServerMessage_JobBatch
+	//	*ServerMessage_AuthChallenge
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -246,7 +307,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_proto_monitor_proto_msgTypes[3]
+	mi := &file_proto_monitor_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -258,7 +319,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[3]
+	mi := &file_proto_monitor_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -271,7 +332,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{3}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ServerMessage) GetPayload() isServerMessage_Payload {
@@ -299,6 +360,15 @@ func (x *ServerMessage) GetJobBatch() *JobBatch {
 	return nil
 }
 
+func (x *ServerMessage) GetAuthChallenge() *AuthChallenge {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_AuthChallenge); ok {
+			return x.AuthChallenge
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Payload interface {
 	isServerMessage_Payload()
 }
@@ -311,9 +381,59 @@ type ServerMessage_JobBatch struct {
 	JobBatch *JobBatch `protobuf:"bytes,2,opt,name=job_batch,json=jobBatch,proto3,oneof"`
 }
 
+type ServerMessage_AuthChallenge struct {
+	AuthChallenge *AuthChallenge `protobuf:"bytes,3,opt,name=auth_challenge,json=authChallenge,proto3,oneof"`
+}
+
 func (*ServerMessage_Pong) isServerMessage_Payload() {}
 
 func (*ServerMessage_JobBatch) isServerMessage_Payload() {}
+
+func (*ServerMessage_AuthChallenge) isServerMessage_Payload() {}
+
+type AuthChallenge struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Nonce         string                 `protobuf:"bytes,1,opt,name=nonce,proto3" json:"nonce,omitempty"` // Random hex string for handshake
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthChallenge) Reset() {
+	*x = AuthChallenge{}
+	mi := &file_proto_monitor_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthChallenge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthChallenge) ProtoMessage() {}
+
+func (x *AuthChallenge) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_monitor_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthChallenge.ProtoReflect.Descriptor instead.
+func (*AuthChallenge) Descriptor() ([]byte, []int) {
+	return file_proto_monitor_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *AuthChallenge) GetNonce() string {
+	if x != nil {
+		return x.Nonce
+	}
+	return ""
+}
 
 type Pong struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -325,7 +445,7 @@ type Pong struct {
 
 func (x *Pong) Reset() {
 	*x = Pong{}
-	mi := &file_proto_monitor_proto_msgTypes[4]
+	mi := &file_proto_monitor_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -337,7 +457,7 @@ func (x *Pong) String() string {
 func (*Pong) ProtoMessage() {}
 
 func (x *Pong) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[4]
+	mi := &file_proto_monitor_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -350,7 +470,7 @@ func (x *Pong) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pong.ProtoReflect.Descriptor instead.
 func (*Pong) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{4}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Pong) GetTimestampMs() uint64 {
@@ -377,7 +497,7 @@ type JobBatch struct {
 
 func (x *JobBatch) Reset() {
 	*x = JobBatch{}
-	mi := &file_proto_monitor_proto_msgTypes[5]
+	mi := &file_proto_monitor_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -389,7 +509,7 @@ func (x *JobBatch) String() string {
 func (*JobBatch) ProtoMessage() {}
 
 func (x *JobBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[5]
+	mi := &file_proto_monitor_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -402,7 +522,7 @@ func (x *JobBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobBatch.ProtoReflect.Descriptor instead.
 func (*JobBatch) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{5}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *JobBatch) GetBatchId() string {
@@ -421,16 +541,17 @@ func (x *JobBatch) GetJobs() []*Job {
 
 type Job struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`              // UUID
-	TargetUrl     string                 `protobuf:"bytes,2,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`  // fully qualified, e.g. "https://example.com/health"
-	TimeoutMs     uint32                 `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"` // per-probe wall-clock ceiling
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	TargetUrl     string                 `protobuf:"bytes,2,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`
+	TimeoutMs     uint32                 `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	TaskNonce     string                 `protobuf:"bytes,4,opt,name=task_nonce,json=taskNonce,proto3" json:"task_nonce,omitempty"` // Required for signature verification
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_proto_monitor_proto_msgTypes[6]
+	mi := &file_proto_monitor_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +563,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[6]
+	mi := &file_proto_monitor_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +576,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{6}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Job) GetJobId() string {
@@ -479,31 +600,40 @@ func (x *Job) GetTimeoutMs() uint32 {
 	return 0
 }
 
+func (x *Job) GetTaskNonce() string {
+	if x != nil {
+		return x.TaskNonce
+	}
+	return ""
+}
+
 // ─── Probe Result (Miner → Server) ────────────────────────────────────────
 type ProbeResult struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	JobId      string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	BatchId    string                 `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
-	NodeId     string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	TargetUrl  string                 `protobuf:"bytes,4,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`
-	Success    bool                   `protobuf:"varint,5,opt,name=success,proto3" json:"success,omitempty"`
-	StatusCode uint32                 `protobuf:"varint,6,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"` // 0 when connection never established
-	// Phase latencies in microseconds for sub-millisecond precision
-	DnsUs         uint64 `protobuf:"varint,7,opt,name=dns_us,json=dnsUs,proto3" json:"dns_us,omitempty"`
-	TcpUs         uint64 `protobuf:"varint,8,opt,name=tcp_us,json=tcpUs,proto3" json:"tcp_us,omitempty"`
-	TlsUs         uint64 `protobuf:"varint,9,opt,name=tls_us,json=tlsUs,proto3" json:"tls_us,omitempty"` // 0 for plain HTTP
-	TtfbUs        uint64 `protobuf:"varint,10,opt,name=ttfb_us,json=ttfbUs,proto3" json:"ttfb_us,omitempty"`
-	TotalUs       uint64 `protobuf:"varint,11,opt,name=total_us,json=totalUs,proto3" json:"total_us,omitempty"`
-	ErrorKind     string `protobuf:"bytes,12,opt,name=error_kind,json=errorKind,proto3" json:"error_kind,omitempty"` // empty on success; enum-like string from Rust
-	ErrorMsg      string `protobuf:"bytes,13,opt,name=error_msg,json=errorMsg,proto3" json:"error_msg,omitempty"`
-	TimestampMs   uint64 `protobuf:"varint,14,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	JobId       string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	BatchId     string                 `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	NodeId      string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	TargetUrl   string                 `protobuf:"bytes,4,opt,name=target_url,json=targetUrl,proto3" json:"target_url,omitempty"`
+	Success     bool                   `protobuf:"varint,5,opt,name=success,proto3" json:"success,omitempty"`
+	StatusCode  uint32                 `protobuf:"varint,6,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
+	DnsUs       uint64                 `protobuf:"varint,7,opt,name=dns_us,json=dnsUs,proto3" json:"dns_us,omitempty"`
+	TcpUs       uint64                 `protobuf:"varint,8,opt,name=tcp_us,json=tcpUs,proto3" json:"tcp_us,omitempty"`
+	TlsUs       uint64                 `protobuf:"varint,9,opt,name=tls_us,json=tlsUs,proto3" json:"tls_us,omitempty"`
+	TtfbUs      uint64                 `protobuf:"varint,10,opt,name=ttfb_us,json=ttfbUs,proto3" json:"ttfb_us,omitempty"`
+	TotalUs     uint64                 `protobuf:"varint,11,opt,name=total_us,json=totalUs,proto3" json:"total_us,omitempty"`
+	ErrorKind   string                 `protobuf:"bytes,12,opt,name=error_kind,json=errorKind,proto3" json:"error_kind,omitempty"`
+	ErrorMsg    string                 `protobuf:"bytes,13,opt,name=error_msg,json=errorMsg,proto3" json:"error_msg,omitempty"`
+	TimestampMs uint64                 `protobuf:"varint,14,opt,name=timestamp_ms,json=timestampMs,proto3" json:"timestamp_ms,omitempty"`
+	// 🛡️ SECURITY FIELDS: Must be signed by the miner
+	TaskNonce     string `protobuf:"bytes,15,opt,name=task_nonce,json=taskNonce,proto3" json:"task_nonce,omitempty"` // Ensure this index is 15 in both projects
+	Signature     []byte `protobuf:"bytes,16,opt,name=signature,proto3" json:"signature,omitempty"`                  // Ensure this index is 16 in both projects
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_proto_monitor_proto_msgTypes[7]
+	mi := &file_proto_monitor_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +645,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_monitor_proto_msgTypes[7]
+	mi := &file_proto_monitor_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +658,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_proto_monitor_proto_rawDescGZIP(), []int{7}
+	return file_proto_monitor_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProbeResult) GetJobId() string {
@@ -629,39 +759,61 @@ func (x *ProbeResult) GetTimestampMs() uint64 {
 	return 0
 }
 
+func (x *ProbeResult) GetTaskNonce() string {
+	if x != nil {
+		return x.TaskNonce
+	}
+	return ""
+}
+
+func (x *ProbeResult) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 var File_proto_monitor_proto protoreflect.FileDescriptor
 
 const file_proto_monitor_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/monitor.proto\x12\amonitor\"\xa4\x01\n" +
+	"\x13proto/monitor.proto\x12\amonitor\"\xe2\x01\n" +
 	"\fMinerMessage\x124\n" +
 	"\bregister\x18\x01 \x01(\v2\x16.monitor.MinerRegisterH\x00R\bregister\x12#\n" +
 	"\x04ping\x18\x02 \x01(\v2\r.monitor.PingH\x00R\x04ping\x12.\n" +
-	"\x06result\x18\x03 \x01(\v2\x14.monitor.ProbeResultH\x00R\x06resultB\t\n" +
+	"\x06result\x18\x03 \x01(\v2\x14.monitor.ProbeResultH\x00R\x06result\x12<\n" +
+	"\rauth_response\x18\x04 \x01(\v2\x15.monitor.AuthResponseH\x00R\fauthResponseB\t\n" +
 	"\apayload\"e\n" +
 	"\rMinerRegister\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12!\n" +
-	"\ftimestamp_ms\x18\x03 \x01(\x04R\vtimestampMs\"B\n" +
+	"\ftimestamp_ms\x18\x03 \x01(\x04R\vtimestampMs\",\n" +
+	"\fAuthResponse\x12\x1c\n" +
+	"\tsignature\x18\x01 \x01(\fR\tsignature\"B\n" +
 	"\x04Ping\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x04R\vtimestampMs\x12\x17\n" +
-	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"q\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"\xb2\x01\n" +
 	"\rServerMessage\x12#\n" +
 	"\x04pong\x18\x01 \x01(\v2\r.monitor.PongH\x00R\x04pong\x120\n" +
-	"\tjob_batch\x18\x02 \x01(\v2\x11.monitor.JobBatchH\x00R\bjobBatchB\t\n" +
-	"\apayload\"O\n" +
+	"\tjob_batch\x18\x02 \x01(\v2\x11.monitor.JobBatchH\x00R\bjobBatch\x12?\n" +
+	"\x0eauth_challenge\x18\x03 \x01(\v2\x16.monitor.AuthChallengeH\x00R\rauthChallengeB\t\n" +
+	"\apayload\"%\n" +
+	"\rAuthChallenge\x12\x14\n" +
+	"\x05nonce\x18\x01 \x01(\tR\x05nonce\"O\n" +
 	"\x04Pong\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x04R\vtimestampMs\x12$\n" +
 	"\x0eserver_time_ms\x18\x02 \x01(\x04R\fserverTimeMs\"G\n" +
 	"\bJobBatch\x12\x19\n" +
 	"\bbatch_id\x18\x01 \x01(\tR\abatchId\x12 \n" +
-	"\x04jobs\x18\x02 \x03(\v2\f.monitor.JobR\x04jobs\"Z\n" +
+	"\x04jobs\x18\x02 \x03(\v2\f.monitor.JobR\x04jobs\"y\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1d\n" +
 	"\n" +
 	"target_url\x18\x02 \x01(\tR\ttargetUrl\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\rR\ttimeoutMs\"\x8a\x03\n" +
+	"timeout_ms\x18\x03 \x01(\rR\ttimeoutMs\x12\x1d\n" +
+	"\n" +
+	"task_nonce\x18\x04 \x01(\tR\ttaskNonce\"\xc7\x03\n" +
 	"\vProbeResult\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
 	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12\x17\n" +
@@ -680,7 +832,10 @@ const file_proto_monitor_proto_rawDesc = "" +
 	"\n" +
 	"error_kind\x18\f \x01(\tR\terrorKind\x12\x1b\n" +
 	"\terror_msg\x18\r \x01(\tR\berrorMsg\x12!\n" +
-	"\ftimestamp_ms\x18\x0e \x01(\x04R\vtimestampMs2P\n" +
+	"\ftimestamp_ms\x18\x0e \x01(\x04R\vtimestampMs\x12\x1d\n" +
+	"\n" +
+	"task_nonce\x18\x0f \x01(\tR\ttaskNonce\x12\x1c\n" +
+	"\tsignature\x18\x10 \x01(\fR\tsignature2P\n" +
 	"\x0eMonitorService\x12>\n" +
 	"\tJobStream\x12\x15.monitor.MinerMessage\x1a\x16.monitor.ServerMessage(\x010\x01B\fZ\n" +
 	"grpc/pb;pbb\x06proto3"
@@ -697,31 +852,35 @@ func file_proto_monitor_proto_rawDescGZIP() []byte {
 	return file_proto_monitor_proto_rawDescData
 }
 
-var file_proto_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_proto_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_proto_monitor_proto_goTypes = []any{
 	(*MinerMessage)(nil),  // 0: monitor.MinerMessage
 	(*MinerRegister)(nil), // 1: monitor.MinerRegister
-	(*Ping)(nil),          // 2: monitor.Ping
-	(*ServerMessage)(nil), // 3: monitor.ServerMessage
-	(*Pong)(nil),          // 4: monitor.Pong
-	(*JobBatch)(nil),      // 5: monitor.JobBatch
-	(*Job)(nil),           // 6: monitor.Job
-	(*ProbeResult)(nil),   // 7: monitor.ProbeResult
+	(*AuthResponse)(nil),  // 2: monitor.AuthResponse
+	(*Ping)(nil),          // 3: monitor.Ping
+	(*ServerMessage)(nil), // 4: monitor.ServerMessage
+	(*AuthChallenge)(nil), // 5: monitor.AuthChallenge
+	(*Pong)(nil),          // 6: monitor.Pong
+	(*JobBatch)(nil),      // 7: monitor.JobBatch
+	(*Job)(nil),           // 8: monitor.Job
+	(*ProbeResult)(nil),   // 9: monitor.ProbeResult
 }
 var file_proto_monitor_proto_depIdxs = []int32{
 	1, // 0: monitor.MinerMessage.register:type_name -> monitor.MinerRegister
-	2, // 1: monitor.MinerMessage.ping:type_name -> monitor.Ping
-	7, // 2: monitor.MinerMessage.result:type_name -> monitor.ProbeResult
-	4, // 3: monitor.ServerMessage.pong:type_name -> monitor.Pong
-	5, // 4: monitor.ServerMessage.job_batch:type_name -> monitor.JobBatch
-	6, // 5: monitor.JobBatch.jobs:type_name -> monitor.Job
-	0, // 6: monitor.MonitorService.JobStream:input_type -> monitor.MinerMessage
-	3, // 7: monitor.MonitorService.JobStream:output_type -> monitor.ServerMessage
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	3, // 1: monitor.MinerMessage.ping:type_name -> monitor.Ping
+	9, // 2: monitor.MinerMessage.result:type_name -> monitor.ProbeResult
+	2, // 3: monitor.MinerMessage.auth_response:type_name -> monitor.AuthResponse
+	6, // 4: monitor.ServerMessage.pong:type_name -> monitor.Pong
+	7, // 5: monitor.ServerMessage.job_batch:type_name -> monitor.JobBatch
+	5, // 6: monitor.ServerMessage.auth_challenge:type_name -> monitor.AuthChallenge
+	8, // 7: monitor.JobBatch.jobs:type_name -> monitor.Job
+	0, // 8: monitor.MonitorService.JobStream:input_type -> monitor.MinerMessage
+	4, // 9: monitor.MonitorService.JobStream:output_type -> monitor.ServerMessage
+	9, // [9:10] is the sub-list for method output_type
+	8, // [8:9] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_proto_monitor_proto_init() }
@@ -733,10 +892,12 @@ func file_proto_monitor_proto_init() {
 		(*MinerMessage_Register)(nil),
 		(*MinerMessage_Ping)(nil),
 		(*MinerMessage_Result)(nil),
+		(*MinerMessage_AuthResponse)(nil),
 	}
-	file_proto_monitor_proto_msgTypes[3].OneofWrappers = []any{
+	file_proto_monitor_proto_msgTypes[4].OneofWrappers = []any{
 		(*ServerMessage_Pong)(nil),
 		(*ServerMessage_JobBatch)(nil),
+		(*ServerMessage_AuthChallenge)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -744,7 +905,7 @@ func file_proto_monitor_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_monitor_proto_rawDesc), len(file_proto_monitor_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

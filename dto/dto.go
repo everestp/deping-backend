@@ -79,32 +79,38 @@ type RunnerResponse struct {
 }
 // ── Ping result (from Rust miner) ─────────────────────────────────────────
 
+
+
+// PingResultItem represents the data structure of a single probe outcome.
 type PingResultItem struct {
-	JobID       string `json:"job_id"`       // Composite identifier: monitor_id:runner_pubkey:timestamp
-	BatchID     string `json:"batch_id"`     // Unique ID grouping jobs in a miner evaluation batch
-	NodeID      string `json:"node_id"`      // The public identification string of the runner
-	TargetURL   string `json:"target_url"`   // The URL target requested by the monitor
-	Success     bool   `json:"success"`      // Flag showing whether response yielded a 2xx HTTP code
-	StatusCode  int    `json:"status_code"`  // Raw HTTP response status; 0 if network request failed completely
+    JobID       string `json:"job_id"`
+    BatchID     string `json:"batch_id"`
+    NodeID      string `json:"node_id"`
+    TargetURL   string `json:"target_url"`
+    Success     bool   `json:"success"`
+    StatusCode  int    `json:"status_code"`
 
-	// ── Phase latencies in microseconds (us) ───────────────────────────────────
-	DnsUs       int64  `json:"dns_us"`       // DNS resolution duration
-	TcpUs       int64  `json:"tcp_us"`       // TCP connection handshaking duration
-	TlsUs       int64  `json:"tls_us"`       // TLS handshake duration (0 for plain HTTP targets)
-	TtfbUs      int64  `json:"ttfb_us"`      // Time to First Byte (TTFB) duration
-	TotalUs     int64  `json:"total_us"`     // Total raw network transaction duration
-	LatencyMs   int    `json:"latency_ms"`   // Computed field for backwards compatibility with legacy UI APIs
+    // ── Phase latencies in microseconds (us) ───────────────────────────────────
+    DnsUs       int64  `json:"dns_us"`
+    TcpUs       int64  `json:"tcp_us"`
+    TlsUs       int64  `json:"tls_us"`
+    TtfbUs      int64  `json:"ttfb_us"`
+    TotalUs     int64  `json:"total_us"`
+    LatencyMs   int    `json:"latency_ms"`
 
-	// ── Error envelope (empty strings on success) ──────────────────────────────
-	ErrorKind   string `json:"error_kind"`   // Stable uppercase error tag (e.g., TIMEOUT, DNS_FAILURE)
-	ErrorMsg    string `json:"error_msg"`    // Human-readable message detailing why the check broke
+    // 🛡️ SECURITY ADDITION: Nonce for integrity verification
+    TaskNonce   string `json:"task_nonce"`
 
-	// ── Metadata ──────────────────────────────────────────────────────────────
-	MonitorID   string `json:"monitor_id"`   // Legacy matching attribute (populated via split fallback)
-	GeoRegion   string `json:"geo_region"`   // Geographic regional cluster mapping context
-	TimestampMs int64  `json:"timestamp_ms"` // Unix epoch milliseconds when the probe was dispatched
-	Latitude  float64 `json:"latitude"`
-    Longitude float64 `json:"longitude"`
+    // ── Error envelope ────────────────────────────────────────────────────────
+    ErrorKind   string `json:"error_kind"`
+    ErrorMsg    string `json:"error_msg"`
+
+    // ── Metadata ──────────────────────────────────────────────────────────────
+    MonitorID   string `json:"monitor_id"`
+    GeoRegion   string `json:"geo_region"`
+    TimestampMs int64  `json:"timestamp_ms"`
+    Latitude    float64 `json:"latitude"`
+    Longitude   float64 `json:"longitude"`
 }
 
 type SubmitResultsRequest struct {

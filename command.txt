@@ -1,0 +1,11 @@
+protoc --plugin=protoc-gen-go=$(go env GOPATH)/bin/protoc-gen-go \
+  --plugin=protoc-gen-go-grpc=$(go env GOPATH)/bin/protoc-gen-go-grpc \
+  -I=proto \
+  --go_out=grpc/pb --go_opt=paths=source_relative \
+  --go-grpc_out=grpc/pb --go-grpc_opt=paths=source_relative \
+  proto/monitor.proto
+
+
+protoc --go_out=./grpc/pb --go_opt=paths=source_relative \
+       --go-grpc_out=./grpc/pb --go-grpc_opt=paths=source_relative \
+       proto/monitor.proto
