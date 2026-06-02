@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ import (
 	grpcserver "github.com/everestp/depin-backend/grpc"
 	"github.com/everestp/depin-backend/router"
 	"github.com/everestp/depin-backend/services"
+	"github.com/everestp/depin-backend/solana"
 	"github.com/everestp/depin-backend/workers"
 )
 
@@ -85,6 +87,7 @@ if err := services.SyncSchedulerState(ctx, rdb, store); err != nil {
 	runnerSvc := services.NewRunnerService(store, rdb, rabbitCh, cfg, memRegistry)
 	rewardSvc := services.NewRewardService(store, rabbitCh, cfg)
 	pingLogSvc := services.NewPingLogService(store, pool)
+	solanaClient := solana.NewClient(cfg.SolanaRPCURL)
 
 	// ── Controllers ────────────────────────────────────────────────────────
 	r := router.New(cfg,
@@ -93,6 +96,7 @@ if err := services.SyncSchedulerState(ctx, rdb, store); err != nil {
 		controllers.NewRunnerController(runnerSvc),
 		controllers.NewRewardController(rewardSvc),
 		controllers.NewPingController(pingLogSvc, rabbitCh, validator),
+		controllers.NewTransactionController(solanaClient),
 	)
 
 	application.httpServer = &http.Server{
@@ -129,24 +133,52 @@ func (a *Application) BootstrapScheduler(ctx context.Context, store *repositorie
 }
 
 func (a *Application) Run() error {
-	errCh := make(chan error, 2)
-	// go func() { if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed { errCh <- err } }()
-	go func() {
-		lis, err := net.Listen("tcp", ":"+a.cfg.GRPCPort)
-		if err == nil { errCh <- a.grpcServer.Serve(lis) } else { errCh <- err }
-	}()
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case err := <-errCh: return err
-	case <-quit:
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		a.grpcServer.GracefulStop()
-		return a.httpServer.Shutdown(ctx)
-	}
-}
+    errCh := make(chan error, 2)
 
+    // 1. Start HTTP Server
+    // go func() {
+    //     if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+    //         errCh <- fmt.Errorf("http server: %w", err)
+    //     }
+    // }()
+
+    // 2. Start gRPC Server
+    go func() {
+        lis, err := net.Listen("tcp", ":"+a.cfg.GRPCPort)
+        if err != nil {
+            errCh <- fmt.Errorf("grpc listener: %w", err)
+            return
+        }
+        if err := a.grpcServer.Serve(lis); err != nil {
+            errCh <- fmt.Errorf("grpc server: %w", err)
+        }
+    }()
+
+    // 3. Wait for signal or error
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+    select {
+    case err := <-errCh:
+        return err
+    case <-quit:
+        log.Println("Shutting down servers...")
+
+        // Create a context for graceful shutdown
+        ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+        defer cancel()
+
+        // Stop gRPC immediately
+        a.grpcServer.GracefulStop()
+
+        // Shutdown HTTP gracefully
+        if err := a.httpServer.Shutdown(ctx); err != nil {
+            return fmt.Errorf("http shutdown: %w", err)
+        }
+
+        return nil
+    }
+}
 func declareQueues(ch *amqp.Channel) error {
     // 1. Declare the queues (as you do now)
     queues := []string{"job_queue", "processing_queue", "solana_sync_queue", "telegram_queue"}

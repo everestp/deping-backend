@@ -30,6 +30,7 @@ CREATE TABLE runner_nodes (
      node_pubkey                 VARCHAR(128) NOT NULL,
     region                       VARCHAR(20)  NOT NULL DEFAULT 'unknown',
     latitude                     NUMERIC(9,6) NOT NULL,
+    node_pda                     VARCHAR(128) NULL
     longitude                    NUMERIC(9,6) NOT NULL,
     offchain_accumulated_tokens  NUMERIC(12,4) DEFAULT 0.0000,
     total_earned_tokens_all_time NUMERIC(12,4) DEFAULT 0.0000,

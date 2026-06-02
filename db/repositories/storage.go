@@ -175,6 +175,8 @@ type PingLogRepository interface {
 }
 
 type SolanaSyncRepository interface {
-	RecordSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
-	ExistsBySignature(ctx context.Context, txSignature string) (bool, error)
+    RecordSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
+    ExistsBySignature(ctx context.Context, txSignature string) (bool, error)
+    // FinalizeSync handles the atomic log-and-debit transaction
+    FinalizeSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
 }

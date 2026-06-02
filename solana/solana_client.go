@@ -2,9 +2,9 @@ package solana
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strconv"
-
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -76,4 +76,51 @@ func (c *Client) GetSOLBalance(ctx context.Context, walletPubkeyStr string) (uin
 	}
 
 	return out.Value, nil
+}
+
+
+// ValidateOnChainAmount validates the transaction amount
+func (c *Client) ValidateOnChainAmount(ctx context.Context, txSignature string, expectedAmount uint64) (bool, error) {
+    sig, err := solana.SignatureFromBase58(txSignature)
+    if err != nil {
+        return false, fmt.Errorf("invalid signature: %w", err)
+    }
+
+    out, err := c.rpcClient.GetTransaction(ctx, sig, &rpc.GetTransactionOpts{
+        Encoding:   solana.EncodingBase64,
+        Commitment: rpc.CommitmentFinalized,
+    })
+    if err != nil {
+        return false, fmt.Errorf("rpc GetTransaction failed: %w", err)
+    }
+
+    // Access the transaction object correctly
+    // Depending on your version, 'out.Transaction' might be a *solana.Transaction
+    // or a specialized RPC transaction struct.
+    tx, err := out.Transaction.GetTransaction()
+    if err != nil {
+        return false, fmt.Errorf("failed to get transaction: %w", err)
+    }
+
+    // Access instructions through the Message
+    instructions := tx.Message.Instructions
+    if len(instructions) == 0 {
+        return false, fmt.Errorf("no instructions found in transaction")
+    }
+
+    // The data is found in the first instruction
+    data := instructions[0].Data
+
+    if len(data) < 16 {
+        return false, fmt.Errorf("instruction data too short")
+    }
+
+    // Extract amount
+    onChainAmount := binary.LittleEndian.Uint64(data[8:16])
+
+    if onChainAmount != expectedAmount {
+        return false, fmt.Errorf("integrity check failed: expected %d, found %d", expectedAmount, onChainAmount)
+    }
+
+    return true, nil
 }

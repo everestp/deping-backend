@@ -2,8 +2,9 @@ package workers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
-    "encoding/binary"
 	"fmt"
 	"log"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/everestp/depin-backend/config/env"
 	"github.com/everestp/depin-backend/db/repositories"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/gagliardetto/solana-go"
@@ -26,102 +28,80 @@ type SolanaSyncPayload struct {
 // Anchor instruction discriminator for "add_reward"
 var addRewardDiscriminator = [8]byte{108, 14, 219, 10, 116, 2, 237, 204}
 
-func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, rabbitCh *amqp.Channel, cfg *env.Config) {
-	store := repositories.NewStorage(pool)
-
-	go func() {
-		msgs, err := rabbitCh.Consume("solana_sync_queue", "", false, false, false, false, nil)
-		if err != nil {
-			log.Fatalf("[solana-sync] consume error: %v", err)
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-msgs:
-				if !ok {
-					return
-				}
-
-				if err := processSyncMessage(ctx, msg, store, cfg); err != nil {
-					log.Printf("[solana-sync] processing error: %v", err)
-
-					// Reject malformed data automatically to prevent infinite dead-loops
-					if err.Error() == "malformed json payload" || err.Error() == "runner node has not been initialized on-chain yet" {
-						_ = msg.Ack(false)
-					} else {
-						// Back off and requeue transient RPC infrastructure errors gracefully
-						time.Sleep(5 * time.Second)
-						_ = msg.Nack(false, true)
-					}
-				} else {
-					_ = msg.Ack(false)
-				}
-			}
-		}
-	}()
-}
-
-func processSyncMessage(ctx context.Context, msg amqp.Delivery, store *repositories.Storage, cfg *env.Config) error {
+func ProcessSyncMessage(ctx context.Context, msg amqp.Delivery, store *repositories.Storage, rabbitCh *amqp.Channel, cfg *env.Config) error {
 	var payload SolanaSyncPayload
 	if err := json.Unmarshal(msg.Body, &payload); err != nil {
 		return fmt.Errorf("malformed json payload")
 	}
 
-	if payload.AmountTokens < 10.0 {
-		log.Printf("[solana-sync] Skipping node %s: reward %.4f < 10.0 threshold", payload.RunnerPubkey, payload.AmountTokens)
-		return nil
+	// 1. Extract Retry Count from RabbitMQ Headers
+	retryCount := 0
+	if val, ok := msg.Headers["retry_count"]; ok {
+		switch v := val.(type) {
+		case int32: retryCount = int(v)
+		case int64: retryCount = int(v)
+		}
 	}
 
-	programID, err := solana.PublicKeyFromBase58("EA4pKJ33F2p4oQyKNcCGMBptjSgbHQzCz2H8QgHbYAgR")
-	if err != nil {
-		return fmt.Errorf("invalid program id configuration: %w", err)
-	}
-
+	// 2. Fetch runner record
 	runner, err := store.Runners.FindByPubkey(ctx, payload.RunnerPubkey)
 	if err != nil {
-		return fmt.Errorf("failed to fetch tracking context from database: %w", err)
-	}
-	if runner.NodePubkey == nil || *runner.NodePubkey == "" {
-		return fmt.Errorf("runner node has not been initialized on-chain yet")
+		return fmt.Errorf("database lookup failed: %w", err)
 	}
 
-	nodeAccountPDA, err := solana.PublicKeyFromBase58(*runner.NodePubkey)
+identityKey, err := solana.PublicKeyFromBase58(*runner.NodePubkey)
 	if err != nil {
-		return fmt.Errorf("invalid saved node pda public key string: %w", err)
+		return fmt.Errorf("invalid identity key format: %w", err)
 	}
 
+	// 3. Derive PDA correctly using 32-byte SHA-256 hash of the email
+	emailHash := sha256.Sum256([]byte(runner.OwnerEmail))
+	programID := solana.MustPublicKeyFromBase58("EA4pKJ33F2p4oQyKNcCGMBptjSgbHQzCz2H8QgHbYAgR")
+
+	nodeAccountPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("node"),
+			identityKey.Bytes(),
+			emailHash[:], // Use the 32-byte array, not the raw string
+		},
+		programID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to derive PDA: %w", err)
+	}
+
+	// 4. Execution
 	const decimals = 1_000_000_000
 	amountRaw := uint64(payload.AmountTokens * decimals)
-
 	rpcClient := rpc.New(cfg.SolanaRPCURL)
 
-	// 1. Submit and explicitly AWAIT chain confirmation before database updates
 	txSignature, err := submitAnchorAddReward(ctx, rpcClient, cfg, programID, nodeAccountPDA, amountRaw)
 	if err != nil {
-		return fmt.Errorf("onchain transaction execution failed: %w", err)
+		// Handle transient errors with retry logic
+		if retryCount < 10 {
+			_ = rabbitCh.PublishWithContext(ctx, "", "solana_sync_queue", false, false, amqp.Publishing{
+				ContentType:  "application/json",
+				Body:         msg.Body,
+				DeliveryMode: amqp.Persistent,
+				Headers:      amqp.Table{"retry_count": int32(retryCount + 1)},
+			})
+			_ = msg.Ack(false)
+			return fmt.Errorf("retry %d: chain execution failed: %w", retryCount+1, err)
+		}
+		// Max retries reached: Flag for manual intervention
+		_ = store.Runners.SetPendingSync(ctx, payload.RunnerPubkey, true)
+		_ = msg.Ack(false)
+		return fmt.Errorf("max retries reached for %s", payload.RunnerPubkey)
 	}
 
-	// 2. Local idempotency registry lock check
-	exists, err := store.SolanaSync.ExistsBySignature(ctx, txSignature)
+	// 5. Atomic Finalization
+	err = store.SolanaSync.FinalizeSync(ctx, payload.RunnerPubkey, txSignature, int64(amountRaw))
 	if err != nil {
-		return fmt.Errorf("idempotency check database timeout: %w", err)
-	}
-	if exists {
-		log.Printf("[solana-sync] Transaction %s already processed locally. Skipping.", txSignature)
-		return nil
+		return fmt.Errorf("failed to finalize database state: %w", err)
 	}
 
-	// 3. Write accounting event log
-	if err := store.SolanaSync.RecordSync(ctx, payload.RunnerPubkey, txSignature, int64(amountRaw)); err != nil {
-		return fmt.Errorf("failed to log sync event: %w", err)
-	}
-
-	// 4. Release execution lock state
-	_ = store.Runners.SetPendingSync(ctx, payload.RunnerPubkey, false)
-	log.Printf("[SUCCESS] Settled %f tokens to runner %s. Tx: %s", payload.AmountTokens, payload.RunnerPubkey, txSignature)
-
+	log.Printf("[SUCCESS] Settled %f tokens for %s (PDA: %s). Tx: %s", payload.AmountTokens, payload.RunnerPubkey, nodeAccountPDA, txSignature)
+	_ = msg.Ack(false)
 	return nil
 }
 
@@ -211,4 +191,30 @@ func submitAnchorAddReward(
 	}
 
 	return sig.String(), nil
+}
+
+
+func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, rabbitCh *amqp.Channel, cfg *env.Config) {
+    store := repositories.NewStorage(pool)
+
+    go func() {
+        msgs, err := rabbitCh.Consume("solana_sync_queue", "", false, false, false, false, nil)
+        if err != nil {
+            log.Fatalf("[solana-sync] consume error: %v", err)
+        }
+
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case msg, ok := <-msgs:
+                if !ok { return }
+
+                // Process using the function you provided
+                if err := ProcessSyncMessage(ctx, msg, store, rabbitCh, cfg); err != nil {
+                    log.Printf("[solana-sync] processing error: %v", err)
+                }
+            }
+        }
+    }()
 }

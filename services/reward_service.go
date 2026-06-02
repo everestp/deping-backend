@@ -59,16 +59,22 @@ func (s *rewardService) AccumulateAndMaybeSync(ctx context.Context, pubkey strin
     }
 
     // 3. Publish to queue
-    err = s.rabbitCh.PublishWithContext(ctx, "", "solana_sync_queue", false, false,
-        amqp.Publishing{
-            ContentType:  "application/json",
-            Body:         body,
-            DeliveryMode: amqp.Persistent,
-            // 💡 Add message ID or Timestamp to help with Idempotency
-            MessageId:    fmt.Sprintf("%s-%d", pubkey, time.Now().Unix()),
+  err = s.rabbitCh.PublishWithContext(
+    ctx,
+    "",
+    "solana_sync_queue",
+    false,
+    false,
+    amqp.Publishing{
+        ContentType:  "application/json",
+        Body:         body,
+        DeliveryMode: amqp.Persistent,
+        MessageId:    fmt.Sprintf("%s-%d", pubkey, time.Now().Unix()),
+        Headers: amqp.Table{
+            "retry_count": int32(0),
         },
-    )
-
+    },
+)
     if err != nil {
         // If publishing fails, we ensure the system knows it's pending
         _ = s.store.Runners.SetPendingSync(ctx, pubkey, true)
