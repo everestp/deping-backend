@@ -1,31 +1,3 @@
-CREATE TABLE IF NOT EXISTS solana_sync_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    owner_pubkey TEXT NOT NULL,
-    amount NUMERIC NOT NULL,
-
-    status TEXT NOT NULL DEFAULT 'PENDING',
-
-    retry_count INT NOT NULL DEFAULT 0,
-
-    tx_signature TEXT,
-
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_solana_sync_status
-ON solana_sync_events(status);
-
-
-CREATE INDEX idx_solana_sync_created
-ON solana_sync_events(created_at);
-
-
-CREATE INDEX idx_solana_sync_runner
-ON solana_sync_events(owner_pubkey);
-
-
-
 CREATE OR REPLACE FUNCTION create_payout_event_if_threshold(
     p_pubkey TEXT,
     p_threshold NUMERIC
@@ -87,4 +59,3 @@ BEGIN
     END IF;
 END;
 $$;
-

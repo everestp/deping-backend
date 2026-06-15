@@ -68,7 +68,7 @@ func (s *Storage) ProcessJobSettlement(
 
 	// 2. Call SQL reward engine
 	const q = `
-		SELECT created, amount, reward_delta, owner_pubkey
+		SELECT created, amount, reward_delta, node_pubkey
 		FROM create_payout_event_if_threshold($1, $2)
 	`
 
