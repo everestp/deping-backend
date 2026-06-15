@@ -274,3 +274,122 @@ BEGIN
 
 END;
 $$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+DROP FUNCTION IF EXISTS create_payout_event_if_threshold(TEXT, NUMERIC);
+
+
+
+
+
+CREATE OR REPLACE FUNCTION create_payout_event_if_threshold(
+    p_pubkey TEXT,
+    p_threshold NUMERIC
+)
+RETURNS TABLE(
+    created BOOLEAN,
+    amount NUMERIC,
+    reward_delta NUMERIC,
+    owner_pubkey TEXT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_balance NUMERIC;
+    v_stake NUMERIC;
+    v_multiplier NUMERIC := 1.0;
+    v_base_reward NUMERIC := 0.010;
+    v_reward NUMERIC;
+    v_payout_count INT;
+    v_total_reward NUMERIC;
+BEGIN
+
+    -- Lock runner row
+    SELECT rn.offchain_accumulated_tokens,
+           rn.staked_amount
+    INTO v_balance,
+         v_stake
+    FROM runner_nodes rn
+    WHERE rn.owner_pubkey = p_pubkey
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT FALSE, 0, 0, NULL;
+        RETURN;
+    END IF;
+
+    -- threshold check
+    IF v_balance < p_threshold THEN
+        RETURN QUERY SELECT FALSE, 0, 0, p_pubkey;
+        RETURN;
+    END IF;
+
+    -- normalize stake (lamports → tokens)
+    v_stake := COALESCE(v_stake, 0) / 1000000000.0;
+
+    -- multiplier logic
+    IF v_stake < 20 THEN
+        v_multiplier := 1.0;
+    ELSE
+        v_multiplier := 1.5 + ((v_stake - 20) * 0.01);
+    END IF;
+
+    IF v_multiplier > 5 THEN
+        v_multiplier := 5;
+    END IF;
+
+    -- reward per event
+    v_reward := v_base_reward * v_multiplier;
+
+    IF v_reward > 0.50 THEN
+        v_reward := 0.50;
+    END IF;
+
+    -- how many payouts to generate
+    v_payout_count := FLOOR(v_balance / p_threshold);
+
+    -- total earned in this cycle
+    v_total_reward := v_reward * v_payout_count;
+
+    -- insert payout events
+    IF v_payout_count > 0 THEN
+        INSERT INTO solana_sync_events (
+            owner_pubkey,
+            amount,
+            status,
+            created_at,
+            updated_at
+        )
+        SELECT
+            p_pubkey,
+            v_reward,
+            'PENDING',
+            NOW(),
+            NOW()
+        FROM generate_series(1, v_payout_count);
+    END IF;
+
+    -- reset only offchain balance
+    UPDATE runner_nodes rn
+    SET offchain_accumulated_tokens = 0,
+        total_earned_tokens_all_time = COALESCE(total_earned_tokens_all_time, 0) + v_total_reward,
+        updated_at = NOW()
+    WHERE rn.owner_pubkey = p_pubkey;
+
+    -- return response
+    RETURN QUERY SELECT
+        TRUE,
+        v_reward,
+        v_total_reward,
+        p_pubkey;
+
+END;
+$$;
