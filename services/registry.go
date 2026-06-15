@@ -1,7 +1,6 @@
 package services
 
 import (
-
 	"net/url"
 	"strings"
 	"sync"
@@ -24,9 +23,9 @@ type MemoryRegistry struct {
 }
 
 type SmartScheduler struct {
-	registry      *MemoryRegistry
-	mu            sync.Mutex
-	lastUsedNodes map[string]string // Key: Root Domain -> Value: Last assigned Node Pubkey
+	registry       *MemoryRegistry
+	mu             sync.Mutex
+	domainNodeIdx  map[string]int // Key: root domain -> index into onlineNodes slice (round-robin cursor)
 }
 
 func NewMemoryRegistry() *MemoryRegistry {
@@ -40,7 +39,7 @@ func NewMemoryRegistry() *MemoryRegistry {
 func NewSmartScheduler(reg *MemoryRegistry) *SmartScheduler {
 	return &SmartScheduler{
 		registry:      reg,
-		lastUsedNodes: make(map[string]string),
+		domainNodeIdx: make(map[string]int),
 	}
 }
 
@@ -84,20 +83,6 @@ func (r *MemoryRegistry) startEvictionLoop(interval time.Duration) {
 	}
 }
 
-// func calculateDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {
-// 	const earthRadiusKm = 6371.0
-// 	dLat := (lat2 - lat1) * math.Pi / 180.0
-// 	dLon := (lon2 - lon1) * math.Pi / 180.0
-
-// 	radLat1 := lat1 * math.Pi / 180.0
-// 	radLat2 := lat2 * math.Pi / 180.0
-
-// 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-// 		math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(radLat1)*math.Cos(radLat2)
-// 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-// 	return earthRadiusKm * c
-// }
-
 func cleanDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -106,41 +91,51 @@ func cleanDomain(rawURL string) string {
 	return strings.ToLower(parsed.Hostname())
 }
 
+// MatchBatch assigns each monitor to an online node using per-domain round-robin.
+//
+// Key fixes vs old version:
+//  1. A node can receive MULTIPLE monitors per tick (removed the "busy" exclusion).
+//     The old code had `if _, busy := assignments[node.Pubkey]; busy { continue }`
+//     which meant only 1 monitor could ever be assigned per node per tick — every
+//     monitor beyond the first was silently dropped.
+//  2. Round-robin uses a persistent cursor index, not last-pubkey string comparison.
+//     The old `if node.Pubkey != last` check permanently skipped the only node once
+//     it had been used once, causing the scheduler to appear dead after ~3-4 minutes.
+//  3. domainCounts cap (max 5 per domain per tick) is preserved.
 func (s *SmartScheduler) MatchBatch(monitors []*repositories.Monitor) map[string]*repositories.Monitor {
-    s.mu.Lock()
-    defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-    assignments := make(map[string]*repositories.Monitor)
-    domainCounts := make(map[string]int)
-    onlineNodes := s.registry.GetOnlineNodes()
+	assignments := make(map[string]*repositories.Monitor)
+	onlineNodes := s.registry.GetOnlineNodes()
 
-    if len(onlineNodes) == 0 {
-        return assignments
-    }
+	if len(onlineNodes) == 0 {
+		return assignments
+	}
 
-    // Sort or rotate your online nodes so you don't always start with the same one
-    // Simple way: shuffle or just use an index based on the domain
-    for _, m := range monitors {
-        domain := cleanDomain(m.TargetURL)
-        if domainCounts[domain] >= 5 {
-            continue
-        }
+	n := len(onlineNodes)
+	domainCounts := make(map[string]int)
 
-        // Find the next node that isn't busy
-        for _, node := range onlineNodes {
-            if _, busy := assignments[node.Pubkey]; busy {
-                continue
-            }
+	for _, m := range monitors {
+		domain := cleanDomain(m.TargetURL)
 
-            // Basic Round-Robin per domain
-            last := s.lastUsedNodes[domain]
-            if node.Pubkey != last {
-                assignments[node.Pubkey] = m
-                domainCounts[domain]++
-                s.lastUsedNodes[domain] = node.Pubkey
-                break
-            }
-        }
-    }
-    return assignments
+		// Cap: at most 5 jobs for the same domain per scheduler tick
+		if domainCounts[domain] >= 5 {
+			continue
+		}
+
+		// Round-robin: advance the cursor for this domain and pick the next node.
+		// Works correctly with 1 node (idx stays 0 → same node every time, which
+		// is correct when there's only one choice).
+		idx := s.domainNodeIdx[domain] % n
+		picked := onlineNodes[idx]
+
+		// Advance cursor for next call — wrap via modulo on next entry
+		s.domainNodeIdx[domain] = (idx + 1) % n
+
+		assignments[picked.Pubkey] = m
+		domainCounts[domain]++
+	}
+
+	return assignments
 }

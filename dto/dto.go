@@ -70,6 +70,7 @@ type RegisterRunnerRequest struct {
 type RunnerResponse struct {
 	ID                        int     `json:"id"`
 	OwnerPubkey               string  `json:"owner_pubkey"`
+	NodePubkey                string `json:"node_pubkey"`
 	Region                    string  `json:"region"`
 	Latitude                  float64  `json:"latitude"`
 	Longitude                 float64  `json:"longitude"`

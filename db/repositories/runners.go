@@ -110,20 +110,59 @@ func (r *runnerRepo) FindByPubkey(ctx context.Context, pubkey string) (*RunnerNo
         FROM runner_nodes WHERE owner_pubkey = $1 AND deleted_at IS NULL`
 
 	n := &RunnerNode{}
-	err := r.pool.QueryRow(ctx, q, pubkey).
-		Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.NodePubkey, &n.Region, &n.Latitude, &n.Longitude,
-			&n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
-			&n.PendingSolanaSync, &n.LastSeenTimestamp)
+err := r.pool.QueryRow(ctx, q, pubkey).
+    Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.NodePubkey, &n.Region, &n.Latitude, &n.Longitude,
+        &n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
+        &n.PendingSolanaSync, &n.LastSeenTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("runnerRepo.FindByPubkey: %w", err)
 	}
 	return n, nil
 }
+// FindByNodePDA retrieves a single active runner matching the targeted public key string.
+func (r *runnerRepo) FindByNodePDA(ctx context.Context, nodePDA string) (*RunnerNode, error) {
+	const q = `
+        SELECT id, owner_email, owner_pubkey, node_pubkey, region, latitude, longitude,
+               offchain_accumulated_tokens, total_earned_tokens_all_time,
+               pending_solana_sync, last_seen_timestamp
+        FROM runner_nodes WHERE node_pda = $1 AND deleted_at IS NULL`
+
+	n := &RunnerNode{}
+	err := r.pool.QueryRow(ctx, q, nodePDA).
+		Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.NodePubkey, &n.Region, &n.Latitude, &n.Longitude,
+			&n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime, &n.NodePubkey,
+			&n.PendingSolanaSync, &n.LastSeenTimestamp)
+	if err != nil {
+		return nil, fmt.Errorf("runnerRepo.FindByNodePDA: %w", err)
+	}
+	return n, nil
+}
+// FindByNodePubKey: Ensure this specifically queries the node_pubkey column.
+func (r *runnerRepo) FindByNodePubKey(ctx context.Context, nodePubkey string) (*RunnerNode, error) {
+    const q = `
+        SELECT id, owner_email, owner_pubkey, node_pubkey, region, latitude, longitude,
+               offchain_accumulated_tokens, total_earned_tokens_all_time,
+               pending_solana_sync, last_seen_timestamp
+        FROM runner_nodes WHERE node_pubkey = $1 AND deleted_at IS NULL`
+
+    n := &RunnerNode{}
+    // Use the passed argument 'nodePubkey'
+    err := r.pool.QueryRow(ctx, q, nodePubkey).
+        Scan(&n.ID, &n.OwnerEmail, &n.OwnerPubkey, &n.NodePubkey, &n.Region, &n.Latitude, &n.Longitude,
+            &n.OffchainAccumulatedTokens, &n.TotalEarnedTokensAllTime,
+            &n.PendingSolanaSync, &n.LastSeenTimestamp)
+            
+    if err != nil {
+        // This will now report the correct function name in your logs
+        return nil, fmt.Errorf("runnerRepo.FindByNodePubKey: %w", err)
+    }
+    return n, nil
+}
 
 // UpdateHeartbeat changes the timestamp of the last verified off-chain ping transmission.
-func (r *runnerRepo) UpdateHeartbeat(ctx context.Context, pubkey string) error {
-	const q = `UPDATE runner_nodes SET last_seen_timestamp = NOW() WHERE owner_pubkey = $1`
-	_, err := r.pool.Exec(ctx, q, pubkey)
+func (r *runnerRepo) UpdateHeartbeat(ctx context.Context, nodePubkey string) error {
+	const q = `UPDATE runner_nodes SET last_seen_timestamp = NOW() WHERE node_pubkey = $1`
+	_, err := r.pool.Exec(ctx, q, nodePubkey)
 	if err != nil {
 		return fmt.Errorf("runnerRepo.UpdateHeartbeat: %w", err)
 	}

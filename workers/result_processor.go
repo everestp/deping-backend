@@ -110,7 +110,7 @@ log.Printf("The data of the packet: %+v", packet)	// Route payload context strai
 				if err != nil {
 					log.Printf("[worker-processor] ⚠️ Reward accumulation processing issue for %s: %v", packet.RunnerPubkey, err)
 				} else {
-					log.Printf("[SETTLEMENT] Successfully registered +%.4f token delta for Node: %s", rewardDelta, packet.RunnerPubkey)
+					log.Printf("[SETTLEMENT] Successfully registered +%.4f token delta for Node: %s  for owner pubkey = %s", rewardDelta, packet.NodeId,packet.RunnerPubkey)
 				}
 			}
 

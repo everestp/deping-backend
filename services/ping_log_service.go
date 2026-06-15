@@ -19,6 +19,7 @@ import (
 
 // ResultPacket represents the fully detailed JSON structure passed through RabbitMQ queues.
 type ResultPacket struct {
+	NodeId        string              `json:"node_pubkey"`
 	RunnerPubkey string               `json:"runner_pubkey"`
 	Signature    string               `json:"signature"`
 	Results      []dto.PingResultItem `json:"results"` // Points directly to the comprehensive DTO schema definition

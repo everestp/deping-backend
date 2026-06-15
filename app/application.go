@@ -106,7 +106,7 @@ if err := services.SyncSchedulerState(ctx, rdb, store); err != nil {
 	application.grpcServer = grpcserver.NewServer(runnerSvc, monitorSvc, validator, rabbitConn)
 
 	// ── Workers ────────────────────────────────────────────────────────────
-	workers.StartScheduler(ctx, rdb, pool, rabbitCh, memRegistry, smartScheduler)
+	workers.StartScheduler(ctx, rdb, pool, rabbitConn, memRegistry, smartScheduler)
 	workers.StartResultProcessor(ctx, pool, rabbitConn, pingLogSvc, rewardSvc)
 	workers.StartSolanaSync(ctx, pool, rabbitCh, cfg)
 	workers.StartPartitionCron(ctx, pool)

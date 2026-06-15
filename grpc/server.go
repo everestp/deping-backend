@@ -171,7 +171,7 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
     }
 
     // 3. MINER SESSION ESTABLISHED
-    dbRunner, err := s.runnerSvc.GetByPubkey(ctx, reg.NodeId)
+    dbRunner, err := s.runnerSvc.GetByNodePubKey(ctx, reg.NodeId)
     if err != nil {
         return status.Error(codes.Internal, "internal server error")
     }
@@ -181,7 +181,7 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
 
     sendCh := make(chan *pb.ServerMessage, 64)
     s.mu.Lock()
-    s.miners[reg.NodeId] = &connectedMiner{
+    s.miners[dbRunner.OwnerPubkey] = &connectedMiner{
         nodeID:    reg.NodeId,
         latitude:  dbRunner.Latitude,
         longitude: dbRunner.Longitude,
@@ -193,7 +193,7 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
     // Cleanup session on exit
     defer func() {
         s.mu.Lock()
-        delete(s.miners, reg.NodeId)
+        delete(s.miners, dbRunner.OwnerPubkey)
         s.mu.Unlock()
     }()
 
@@ -230,7 +230,7 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
             if err != nil {
                 return err
             }
-            s.handleMinerMessage(ctx, reg.NodeId, msg, stream)
+            s.handleMinerMessage(ctx, reg.NodeId, dbRunner.OwnerPubkey ,msg, stream)
         }
     }
 }
@@ -238,6 +238,7 @@ func (s *MonitorServiceServer) JobStream(stream pb.MonitorService_JobStreamServe
 func (s *MonitorServiceServer) handleMinerMessage(
     ctx context.Context,
     nodeID string,
+    runnerPubkey string,
     msg *pb.MinerMessage,
     stream pb.MonitorService_JobStreamServer,
 ) {
@@ -260,7 +261,7 @@ func (s *MonitorServiceServer) handleMinerMessage(
         }
 
     case *pb.MinerMessage_Result:
-        s.handleProbeResult(ctx, nodeID, p.Result)
+        s.handleProbeResult(ctx, nodeID,runnerPubkey, p.Result)
 
     case *pb.MinerMessage_AuthResponse:
         // Optional: Handle late-stage auth responses if needed
@@ -270,7 +271,7 @@ func (s *MonitorServiceServer) handleMinerMessage(
         log.Printf("[grpc] unknown or unsupported payload type from node_id=%s", nodeID)
     }
 }
-func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID string, r *pb.ProbeResult) {
+func (s *MonitorServiceServer) handleProbeResult(ctx context.Context, nodeID string, runnerPubkey string, r *pb.ProbeResult) {
     // 🛡️ LAYER 1: DEBUGGING NONCE
     // Log the incoming nonce and job details to verify what the miner is sending
     log.Printf("[grpc-debug] Processing result from node=%s, job=%s, nonce=%s", nodeID, r.JobId, r.TaskNonce)
@@ -308,7 +309,7 @@ if err := s.validator.VerifySignature(nodeID, signableData, r.Signature); err !=
 
     // Miner Location Data
     s.mu.RLock()
-    miner, ok := s.miners[nodeID]
+    miner, ok := s.miners[runnerPubkey]
     s.mu.RUnlock()
 
     region, lat, lng := "Unknown", 0.0, 0.0
@@ -345,7 +346,8 @@ if len(parts) >= 1 {
     }
 
     packet := services.ResultPacket{
-        RunnerPubkey: nodeID,
+        NodeId: nodeID,
+        RunnerPubkey: runnerPubkey,
         Results:      []dto.PingResultItem{item},
     }
 
@@ -393,82 +395,95 @@ func (s *MonitorServiceServer) PushJobBatch(nodeID string, batch *pb.JobBatch) {
 }
 
 // ConsumeJobQueue unmarshals the targeted job and routes it directly to the assigned miner.
+// Drop-in replacement for ConsumeJobQueue in grpc/server.go
+// Only this method changes — everything else in the file stays identical.
+
 func (s *MonitorServiceServer) ConsumeJobQueue(ctx context.Context) {
-    ch, err := s.GetHealthyChannel()
-    if err != nil {
-        log.Fatalf("[grpc-bridge] Failed setup on initialization queue fetch: %v", err)
-    }
+	ch, err := s.GetHealthyChannel()
+	if err != nil {
+		log.Fatalf("[grpc-bridge] Failed setup: %v", err)
+	}
 
-    _ = ch.Qos(1, 0, false)
-    msgs, err := ch.Consume("job_queue", "grpc-dispatcher", false, false, false, false, nil)
-    if err != nil {
-        log.Fatalf("[grpc-bridge] CRITICAL: Consumer pipeline channel failed to register: %v", err)
-    }
+	_ = ch.Qos(1, 0, false)
+	msgs, err := ch.Consume("job_queue", "grpc-dispatcher", false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("[grpc-bridge] CRITICAL: Consumer failed: %v", err)
+	}
 
-    go func() {
-        log.Println("[grpc-bridge] AMQP consumer loop listening for targeted tasks...")
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case msg, ok := <-msgs:
-                if !ok {
-                    time.Sleep(2 * time.Second)
-                    go s.ConsumeJobQueue(ctx)
-                    return
-                }
+	go func() {
+		log.Println("[grpc-bridge] 🚀 Consumer loop started.")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-msgs:
+				if !ok {
+					return
+				}
 
-                var raw jobPayloadRaw
-                if err := json.Unmarshal(msg.Body, &raw); err != nil {
-                    log.Printf("[grpc-bridge] JSON unmarshal error: %v | Body: %s", err, string(msg.Body))
-                    _ = msg.Ack(false)
-                    continue
-                }
+				var raw jobPayloadRaw
+				if err := json.Unmarshal(msg.Body, &raw); err != nil {
+					log.Printf("[grpc-bridge] ❌ Unmarshal error, dead-lettering: %v", err)
+					// Bad JSON will never recover — ack to discard (or route to DLX)
+					_ = msg.Ack(false)
+					continue
+				}
 
-                // 🔍 DEBUG: Verify if the nonce is in the RabbitMQ message
-                if raw.TaskNonce == "" {
-                    log.Printf("[grpc-bridge] WARNING: Task %s has EMPTY TaskNonce! Check upstream producer.", raw.JobID)
-                    _ = msg.Ack(false) // Dropping corrupt task
-                    continue
-                }
+				// Resolve NodeID from RunnerPubkey if not set
+				targetID := raw.RunnerPubkey
+				if targetID == "" {
+					runner, err := s.runnerSvc.GetByPubkey(context.Background(), raw.RunnerPubkey)
+					if err != nil || runner == nil {
+						log.Printf("[grpc-bridge] ❌ Pubkey→NodeID mapping failed for %s, requeueing once", raw.RunnerPubkey)
+						// Nack with requeue=false so it goes to DLX (or is discarded).
+						// Requeue=true here causes an infinite tight loop when the
+						// runner is simply offline — it will never resolve.
+						_ = msg.Nack(false, false)
+						continue
+					}
+					targetID = runner.NodePubkey
+				}
 
-                log.Printf("[grpc-bridge] Verified task %s | Nonce: %s | Target: %s",
-                    raw.JobID, raw.TaskNonce, raw.RunnerPubkey)
+				s.mu.RLock()
+				targetMiner, isConnected := s.miners[raw.RunnerPubkey]
+				s.mu.RUnlock()
 
-                batch := &pb.JobBatch{
-                    BatchId: raw.JobID,
-                    Jobs: []*pb.Job{
-                        {
-                            JobId:     raw.JobID,
-                            TargetUrl: raw.TargetURL,
-                            TimeoutMs: 10000,
-                            TaskNonce: raw.TaskNonce,
-                        },
-                    },
-                }
+				if !isConnected {
+					// Miner offline: nack WITHOUT requeue.
+					// The scheduler will re-issue the job on the next tick anyway.
+					// Requeueing here causes a tight loop that starves the consumer.
+					log.Printf("[grpc-bridge] ⚠️  Miner %s not connected, discarding job %s (scheduler will retry)", targetID, raw.JobID)
+					_ = msg.Nack(false, false)
+					continue
+				}
 
-                s.mu.RLock()
-                targetMiner, isConnected := s.miners[raw.RunnerPubkey]
-                s.mu.RUnlock()
+				batch := &pb.JobBatch{
+					BatchId: raw.JobID,
+					Jobs: []*pb.Job{{
+						JobId:     raw.JobID,
+						TargetUrl: raw.TargetURL,
+						TimeoutMs: 10000,
+						TaskNonce: raw.TaskNonce,
+					}},
+				}
 
-                if isConnected {
-                    select {
-                    case targetMiner.sendCh <- &pb.ServerMessage{
-                        Payload: &pb.ServerMessage_JobBatch{JobBatch: batch},
-                    }:
-                        log.Printf("[grpc-bridge] Successfully pushed job %s to gRPC stream", raw.JobID)
-                        _ = msg.Ack(false)
-                    default:
-                        log.Printf("[grpc-bridge] Miner channel full, nacking job %s", raw.JobID)
-                        _ = msg.Nack(false, true)
-                    }
-                } else {
-                    log.Printf("[grpc-bridge] Miner %s disconnected, re-queuing job %s", raw.RunnerPubkey, raw.JobID)
-                    _ = msg.Nack(false, true)
-                }
-            }
-        }
-    }()
+				select {
+				case targetMiner.sendCh <- &pb.ServerMessage{
+					Payload: &pb.ServerMessage_JobBatch{JobBatch: batch},
+				}:
+					log.Printf("[grpc-bridge] ✅ Dispatched job %s to %s", raw.JobID, targetID)
+					_ = msg.Ack(false)
+				default:
+					// sendCh buffer full — miner is backlogged.
+					// Nack WITHOUT requeue: scheduler retries on next tick.
+					// Requeue=true here creates the exact tight-loop bug that
+					// eventually starves the consumer goroutine.
+					log.Printf("[grpc-bridge] ❌ sendCh full for %s, discarding job %s", targetID, raw.JobID)
+					_ = msg.Nack(false, false)
+				}
+			}
+		}
+	}()
 }
 // ── Geospatial Calculation Helpers ─────────────────────────────────────────
 
@@ -495,6 +510,7 @@ type jobPayloadRaw struct {
     JobID        string `json:"job_id"`
     MonitorID    string `json:"monitor_id"`
     TargetURL    string `json:"target_url"`
+    NodeID        string  `json:"node_id"`
     RunnerPubkey string `json:"runner_pubkey"`
     IssuedAt     int64  `json:"issued_at"`
     ExpiresAt    int64  `json:"expires_at"`
@@ -502,3 +518,4 @@ type jobPayloadRaw struct {
     // 🛡️ SECURITY ADDITION: Unique nonce for the miner to sign
     TaskNonce    string `json:"task_nonce"`
 }
+     

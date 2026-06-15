@@ -17,6 +17,9 @@ import (
 type RunnerService interface {
 	Register(ctx context.Context, email string, req *dto.RegisterRunnerRequest) (*dto.RunnerResponse, error)
 	GetByPubkey(ctx context.Context, pubkey string) (*dto.RunnerResponse, error)
+	GetByNodePubKey(ctx context.Context, NodePubkey string) (*dto.RunnerResponse, error)
+	GetByNodePDA(ctx context.Context, nodePDA string) (*dto.RunnerResponse, error)
+
 	Heartbeat(ctx context.Context, pubkey string) error
 }
 
@@ -68,6 +71,21 @@ func (s *runnerService) GetByPubkey(ctx context.Context, pubkey string) (*dto.Ru
 	}
 	return toRunnerResponse(node), nil
 }
+func (s *runnerService) GetByNodePDA(ctx context.Context, nodePDA string) (*dto.RunnerResponse, error) {
+	node, err := s.store.Runners.FindByNodePDA(ctx, nodePDA)
+	if err != nil {
+		return nil, fmt.Errorf("runner not found: %w", err)
+	}
+	return toRunnerResponse(node), nil
+}
+func (s *runnerService) GetByNodePubKey(ctx context.Context, NodePubkey string) (*dto.RunnerResponse, error) {
+	node, err := s.store.Runners.FindByNodePubKey(ctx, NodePubkey)
+	if err != nil {
+		return nil, fmt.Errorf("runner not found: %w", err)
+	}
+	return toRunnerResponse(node), nil
+}
+
 
 func (s *runnerService) Heartbeat(ctx context.Context, pubkey string) error {
 	// 1. Persist the database-backed timestamp update
@@ -77,7 +95,7 @@ func (s *runnerService) Heartbeat(ctx context.Context, pubkey string) error {
 	}
 
 	// 2. Fetch node properties to extract coordinates and owner mappings
-	node, err := s.store.Runners.FindByPubkey(ctx, pubkey)
+	node, err := s.store.Runners.FindByNodePubKey(ctx, pubkey)
 	if err != nil {
 		return fmt.Errorf("resolve runner for memory allocation: %w", err)
 	}

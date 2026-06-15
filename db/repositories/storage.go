@@ -49,11 +49,14 @@ func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, ru
 		return fmt.Errorf("settlement rejected: monitor %s is inactive or out of credits", monitorID)
 	}
 
-	const runnerQ = `SELECT new_balance, did_sync FROM accumulate_runner_reward($1, $2, 10.0000)`
-	var newBalance float64
-	var didSync bool
+	const runnerQ = `
+    SELECT COALESCE(new_balance, 0.0), COALESCE(did_sync, false) 
+    FROM accumulate_runner_reward($1, $2, 10.0000)`
 
-	err = tx.QueryRow(ctx, runnerQ, runnerPubkey, tokenCost).Scan(&newBalance, &didSync)
+var newBalance float64
+var didSync bool
+
+err = tx.QueryRow(ctx, runnerQ, runnerPubkey, tokenCost).Scan(&newBalance, &didSync)
 	if err != nil {
 		return fmt.Errorf("settlement runner accumulation failed: %w", err)
 	}
@@ -161,6 +164,8 @@ type MonitorRepository interface {
 type RunnerRepository interface {
 	Register(ctx context.Context, ownerEmail, ownerPubkey, region string, lat, lng float64) (*RunnerNode, error)
 	FindByPubkey(ctx context.Context, pubkey string) (*RunnerNode, error)
+	FindByNodePDA(ctx context.Context, pubkey string) (*RunnerNode, error)
+	FindByNodePubKey(ctx context.Context, pubkey string) (*RunnerNode, error)
 	FindByEmailAndPubkey(ctx context.Context, email, pubkey string) ([]*RunnerNode, error)
 	UpdateHeartbeat(ctx context.Context, pubkey string) error
 	AccumulateReward(ctx context.Context, pubkey string, delta, threshold float64) (*AccumulateResult, error)

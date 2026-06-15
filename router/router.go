@@ -35,7 +35,7 @@ func New(
         AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
         AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
         AllowCredentials: true,
-        MaxAge:           300,
+        MaxAge:           30000,
     }))
 
     // ── Health ─────────────────────────────────────────────────────────────
