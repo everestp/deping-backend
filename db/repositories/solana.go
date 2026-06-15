@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/everestp/depin-backend/dto"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -62,4 +63,64 @@ func (r *solanaSyncRepo) FinalizeSync(ctx context.Context, runnerPubkey, txSigna
     }
 
     return tx.Commit(ctx)
+}
+func (r *solanaSyncRepo) FetchPending(ctx context.Context, limit int) ([]dto.SolanaSyncEvent, error) {
+    const q = `
+        SELECT id, owner_pubkey, amount
+        FROM solana_sync_events
+        WHERE status = 'PENDING'
+        ORDER BY created_at ASC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+    `
+
+    rows, err := r.pool.Query(ctx, q, limit)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var events []dto.SolanaSyncEvent
+
+    for rows.Next() {
+        var e dto.SolanaSyncEvent
+        if err := rows.Scan(&e.ID, &e.RunnerPubkey, &e.Amount); err != nil {
+            return nil, err
+        }
+        events = append(events, e)
+    }
+
+    return events, nil
+}
+
+func (r *solanaSyncRepo) MarkProcessing(ctx context.Context, id string) error {
+    _, err := r.pool.Exec(ctx, `
+        UPDATE solana_sync_events
+        SET status = 'PROCESSING'
+        WHERE id = $1
+    `, id)
+    return err
+}
+
+func (r *solanaSyncRepo) MarkDone(ctx context.Context, id, tx string) error {
+    _, err := r.pool.Exec(ctx, `
+        UPDATE solana_sync_events
+        SET status = 'DONE',
+            tx_signature = $2,
+            updated_at = NOW()
+        WHERE id = $1
+    `, id, tx)
+    return err
+}
+
+func (r *solanaSyncRepo) MarkPendingAgain(ctx context.Context, id string) error {
+    _, err := r.pool.Exec(ctx, `
+        UPDATE solana_sync_events
+        SET status = 'PENDING',
+            retry_count = retry_count + 1,
+            updated_at = NOW()
+        WHERE id = $1
+    `, id)
+
+    return err
 }

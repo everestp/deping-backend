@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	
 	"log"
 	"time"
 
@@ -50,82 +50,75 @@ func NewPingLogService(store *repositories.Storage, pool *pgxpool.Pool) PingLogS
 
 // ProcessPacket converts ProbeRecords, inserts logs, and settles payments ATOMICALLY.
 func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket) (float64, error) {
-	if len(packet.Results) == 0 {
-		return 0, nil
-	}
+	// if len(packet.Results) == 0 {
+	// 	return 0, nil
+	// }
 
 	now := time.Now()
 	logsToInsert := make([]*repositories.PingLog, 0, len(packet.Results))
-	var collectiveBatchRewards float64
 
-	for idx := range packet.Results {
-		r := &packet.Results[idx]
-		monitorID := r.MonitorID
+	for i := range packet.Results {
+		r := &packet.Results[i]
 
-		// 1. Core Verification Phase (MonitorID is the absolute final source of truth)
-		if monitorID == "" {
-			log.Printf("[processor] warning: dropping packet item. MonitorID must be supplied as final source of truth.")
+		if r.MonitorID == "" {
 			continue
 		}
 
-		// 2. Dynamic Performance Tier Token Computations
-		// Base completion award fee allocation: 0.001 tokens
-		// Premium performance success bonus allocation: +0.001 tokens
-		tokenSettlementRate := 0.001
-		if r.Success {
-			tokenSettlementRate += 0.001
-		}
+		// 1. Call settlement (SQL handles reward)
+		resp, err := s.store.ProcessJobSettlement(
+			ctx,
+			r.MonitorID,
+			packet.RunnerPubkey,
+			0,
+		)
 
-		// 3. Dual-Sided Database Ledger Settlement (Atomic Transaction)
-		err := s.store.ProcessJobSettlement(ctx, monitorID, packet.RunnerPubkey, tokenSettlementRate)
 		if err != nil {
-			log.Printf("[processor] settlement transaction aborted for monitor %s -> runner %s: %v", monitorID, packet.RunnerPubkey, err)
-			continue // Skip adding this log line since payment and billing failed
+			continue
 		}
 
-		// 4. Transform Records Into System Log Profiles
+		// 🔥 IMPORTANT: LOG PAYOUT INFO (this is what you asked)
+		if resp.Created {
+			log.Printf(
+				"[PAYOUT] owner=%s monitor=%s runner=%s amount=%.6f reward_delta=%.6f triggered_by_monitor=%s",
+				resp.Owner,
+				r.MonitorID,
+				packet.RunnerPubkey,
+				resp.Amount,
+				resp.RewardDelta,
+				r.MonitorID,
+			)
+		}
+
+		// 2. Build ping log
 		ts := now
 		if r.TimestampMs > 0 {
 			ts = time.UnixMilli(r.TimestampMs)
 		}
 
-		latencyMs := float64(r.LatencyMs)
-		if latencyMs == 0 && r.TotalUs > 0 {
-			latencyMs = float64(r.TotalUs) / 1000.0
-		}
-
-		logEntry := &repositories.PingLog{
-			MonitorID:    monitorID,
+		logsToInsert = append(logsToInsert, &repositories.PingLog{
+			MonitorID:    r.MonitorID,
 			RunnerPubkey: packet.RunnerPubkey,
 			DnsUs:        uint64(r.DnsUs),
 			TcpUs:        uint64(r.TcpUs),
 			TlsUs:        uint64(r.TlsUs),
 			TtfbUs:       uint64(r.TtfbUs),
 			TotalUs:      uint64(r.TotalUs),
-			LatencyMs:    latencyMs,
 			StatusCode:   r.StatusCode,
 			Success:      r.Success,
-			ErrorKind:    r.ErrorKind,
-			GeoRegion:    r.GeoRegion,
 			Timestamp:    ts,
-			Latitude:     r.Latitude,
-			Longitude:    r.Longitude,
-		}
-
-		logsToInsert = append(logsToInsert, logEntry)
-		collectiveBatchRewards += tokenSettlementRate
+			TimestampMs: int(r.TimestampMs),
+		})
 	}
 
-	// 5. Bulk write verified logging metadata to database disk storage partitions
+	// 3. bulk insert logs
 	if len(logsToInsert) > 0 {
 		if err := s.store.PingLogs.BulkInsert(ctx, logsToInsert); err != nil {
-			return 0, fmt.Errorf("ping metrics batch storage commit execution failure: %w", err)
+			return 0, err
 		}
 	}
 
-	return collectiveBatchRewards, nil
+	return 0, nil
 }
-
 func (s *pingLogService) GetRecentPings(ctx context.Context, monitorID string, limit int) ([]*repositories.PingLog, error) {
 	return s.store.PingLogs.FindByMonitor(ctx, monitorID, limit)
 }

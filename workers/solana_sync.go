@@ -4,140 +4,126 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/everestp/depin-backend/config/env"
 	"github.com/everestp/depin-backend/db/repositories"
+
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	amqp "github.com/rabbitmq/amqp091-go"
-
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
-// SolanaSyncPayload mirrors your core dynamic service JSON transfer targets.
-type SolanaSyncPayload struct {
-	RunnerPubkey string  `json:"runner_pubkey"`
-	AmountTokens float64 `json:"amount_tokens"`
-}
+const decimals = 1_000_000_000
 
-// Anchor instruction discriminator for "add_reward"
-var addRewardDiscriminator = [8]byte{108, 14, 219, 10, 116, 2, 237, 204}
+// ─────────────────────────────────────────────
+// WORKER START
+// ─────────────────────────────────────────────
 
-func ProcessSyncMessage(ctx context.Context, msg amqp.Delivery, store *repositories.Storage, rabbitCh *amqp.Channel, cfg *env.Config) error {
-	var payload SolanaSyncPayload
-	if err := json.Unmarshal(msg.Body, &payload); err != nil {
-		return fmt.Errorf("malformed json payload")
-	}
+func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, cfg *env.Config) {
 
-	// 1. Extract Retry Count from RabbitMQ Headers
-	retryCount := 0
-	if val, ok := msg.Headers["retry_count"]; ok {
-		switch v := val.(type) {
-		case int32: retryCount = int(v)
-		case int64: retryCount = int(v)
-		}
-	}
-
-	// 2. Fetch runner record
-	runner, err := store.Runners.FindByPubkey(ctx, payload.RunnerPubkey)
-	if err != nil {
-		return fmt.Errorf("database lookup failed: %w", err)
-	}
-
-identityKey, err := solana.PublicKeyFromBase58(*runner.NodePubkey)
-	if err != nil {
-		return fmt.Errorf("invalid identity key format: %w", err)
-	}
-
-	// 3. Derive PDA correctly using 32-byte SHA-256 hash of the email
-	emailHash := sha256.Sum256([]byte(runner.OwnerEmail))
-	programID := solana.MustPublicKeyFromBase58("EA4pKJ33F2p4oQyKNcCGMBptjSgbHQzCz2H8QgHbYAgR")
-
-	nodeAccountPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("node"),
-			identityKey.Bytes(),
-			emailHash[:], // Use the 32-byte array, not the raw string
-		},
-		programID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to derive PDA: %w", err)
-	}
-
-	// 4. Execution
-	const decimals = 1_000_000_000
-	amountRaw := uint64(payload.AmountTokens * decimals)
+	store := repositories.NewStorage(pool)
 	rpcClient := rpc.New(cfg.SolanaRPCURL)
 
-	txSignature, err := submitAnchorAddReward(ctx, rpcClient, cfg, programID, nodeAccountPDA, amountRaw)
-	if err != nil {
-		// Handle transient errors with retry logic
-		if retryCount < 10 {
-			_ = rabbitCh.PublishWithContext(ctx, "", "solana_sync_queue", false, false, amqp.Publishing{
-				ContentType:  "application/json",
-				Body:         msg.Body,
-				DeliveryMode: amqp.Persistent,
-				Headers:      amqp.Table{"retry_count": int32(retryCount + 1)},
-			})
-			_ = msg.Ack(false)
-			return fmt.Errorf("retry %d: chain execution failed: %w", retryCount+1, err)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			// 1. Fetch pending events (DB queue)
+			events, err := store.SolanaSync.FetchPending(ctx, 10)
+			if err != nil {
+				log.Println("[solana-sync] fetch error:", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			for _, event := range events {
+
+				// 2. Lock event for processing
+				_ = store.SolanaSync.MarkProcessing(ctx, event.ID)
+
+				// 3. Execute Solana transaction
+				sig, err := executeRewardTx(
+					ctx,
+					rpcClient,
+					cfg,
+					event.RunnerPubkey,
+					uint64(event.Amount*decimals),
+				)
+
+				if err != nil {
+					log.Println("[solana-sync] tx failed:", err)
+
+					_ = store.SolanaSync.MarkPendingAgain(ctx, event.ID)
+					continue
+				}
+
+				// 4. Mark success
+				_ = store.SolanaSync.MarkDone(ctx, event.ID, sig)
+
+				log.Printf("[solana-sync] success: %s -> %s", event.RunnerPubkey, sig)
+			}
+
+			time.Sleep(2 * time.Second)
 		}
-		// Max retries reached: Flag for manual intervention
-		_ = store.Runners.SetPendingSync(ctx, payload.RunnerPubkey, true)
-		_ = msg.Ack(false)
-		return fmt.Errorf("max retries reached for %s", payload.RunnerPubkey)
-	}
-
-	// 5. Atomic Finalization
-	err = store.SolanaSync.FinalizeSync(ctx, payload.RunnerPubkey, txSignature, int64(amountRaw))
-	if err != nil {
-		return fmt.Errorf("failed to finalize database state: %w", err)
-	}
-
-	log.Printf("[SUCCESS] Settled %f tokens for %s (PDA: %s). Tx: %s", payload.AmountTokens, payload.RunnerPubkey, nodeAccountPDA, txSignature)
-	_ = msg.Ack(false)
-	return nil
+	}()
 }
 
-func submitAnchorAddReward(
+// ─────────────────────────────────────────────
+// SOLANA EXECUTION
+// ─────────────────────────────────────────────
+
+func executeRewardTx(
 	ctx context.Context,
 	client *rpc.Client,
 	cfg *env.Config,
-	programID solana.PublicKey,
-	nodePDA solana.PublicKey,
+	ownerPubkey string,
 	amountRaw uint64,
 ) (string, error) {
-	// Extract the native structural key pairs straight from our validated environment hex string
+
 	backendSigner, err := cfg.GetBackendPrivateKey()
 	if err != nil {
-		return "", fmt.Errorf("invalid backend signer key structure: %w", err)
+		return "", fmt.Errorf("invalid backend signer: %w", err)
 	}
 
-	// Allocate 16 bytes: 8 bytes Anchor discriminator + 8 bytes uint64 amount
-	instructionData := make([]byte, 16)
-	copy(instructionData[0:8], addRewardDiscriminator[:])
+	programID := solana.MustPublicKeyFromBase58(env.Load().BackendPrivateKeyHex)
+	nodePubkey := solana.MustPublicKeyFromBase58(ownerPubkey)
 
-	// ✅ Fixed: Using Go's native encoding/binary library for safe, zero-allocation little-endian packing
-	binary.LittleEndian.PutUint64(instructionData[8:16], amountRaw)
+	// optional PDA logic (keep if your program needs it)
+	emailHash := sha256.Sum256([]byte(ownerPubkey))
+	_, nodePDA, _ := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("node"),
+			nodePubkey.Bytes(),
+			emailHash[:],
+		},
+		programID,
+	)
+fmt.Printf("This is the  nodePDA",nodePDA)
+	// instruction data (Anchor)
+	discriminator := [8]byte{108, 14, 219, 10, 116, 2, 237, 204}
+	data := make([]byte, 16)
+	copy(data[0:8], discriminator[:])
+	binary.LittleEndian.PutUint64(data[8:16], amountRaw)
 
 	instruction := solana.NewInstruction(
 		programID,
 		solana.AccountMetaSlice{
-			solana.NewAccountMeta(nodePDA, true, false),
+			solana.NewAccountMeta(programID, true, false),
 			solana.NewAccountMeta(backendSigner.PublicKey(), false, true),
 		},
-		instructionData,
+		data,
 	)
 
 	recent, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch latest blockhash: %w", err)
+		return "", fmt.Errorf("blockhash error: %w", err)
 	}
 
 	tx, err := solana.NewTransaction(
@@ -146,7 +132,7 @@ func submitAnchorAddReward(
 		solana.TransactionPayer(backendSigner.PublicKey()),
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to assemble transaction envelope: %w", err)
+		return "", fmt.Errorf("tx build error: %w", err)
 	}
 
 	_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
@@ -156,29 +142,26 @@ func submitAnchorAddReward(
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to generate signature: %w", err)
+		return "", fmt.Errorf("sign error: %w", err)
 	}
 
-	// Broadcast transaction to network cluster nodes
 	sig, err := client.SendTransaction(ctx, tx)
 	if err != nil {
-		return "", fmt.Errorf("rpc broadcast execution rejected: %w", err)
+		return "", fmt.Errorf("send error: %w", err)
 	}
 
-	// POLL/AWAIT Confirmation: Ensure transaction is finalized on-chain before returning
-	// This prevents sync state inconsistencies if the RPC node drops or delays confirmation.
-	ok := false
+	// confirm
 	for i := 0; i < 30; i++ {
-		resp, err := client.GetSignatureStatuses(ctx, false, sig)
-		if err == nil && resp != nil && len(resp.Value) > 0 && resp.Value[0] != nil {
-			if resp.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized || resp.Value[0].ConfirmationStatus == rpc.ConfirmationStatusConfirmed {
-				if resp.Value[0].Err == nil {
-					ok = true
-					break
+		st, err := client.GetSignatureStatuses(ctx, false, sig)
+		if err == nil && st != nil && len(st.Value) > 0 && st.Value[0] != nil {
+			if st.Value[0].ConfirmationStatus == rpc.ConfirmationStatusFinalized {
+				if st.Value[0].Err != nil {
+					return "", fmt.Errorf("tx failed on-chain: %v", st.Value[0].Err)
 				}
-				return "", fmt.Errorf("transaction executed but failed on-chain: %v", resp.Value[0].Err)
+				return sig.String(), nil
 			}
 		}
+
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -186,35 +169,5 @@ func submitAnchorAddReward(
 		}
 	}
 
-	if !ok {
-		return "", fmt.Errorf("transaction %s broadcasted but confirmation timed out", sig)
-	}
-
-	return sig.String(), nil
-}
-
-
-func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, rabbitCh *amqp.Channel, cfg *env.Config) {
-    store := repositories.NewStorage(pool)
-
-    go func() {
-        msgs, err := rabbitCh.Consume("solana_sync_queue", "", false, false, false, false, nil)
-        if err != nil {
-            log.Fatalf("[solana-sync] consume error: %v", err)
-        }
-
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case msg, ok := <-msgs:
-                if !ok { return }
-
-                // Process using the function you provided
-                if err := ProcessSyncMessage(ctx, msg, store, rabbitCh, cfg); err != nil {
-                    log.Printf("[solana-sync] processing error: %v", err)
-                }
-            }
-        }
-    }()
+	return "", fmt.Errorf("tx timeout: %s", sig)
 }

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-
+	"github.com/everestp/depin-backend/config/env"
+	"github.com/everestp/depin-backend/dto"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,43 +28,79 @@ func NewStorage(pool *pgxpool.Pool) *Storage {
 	s.SolanaSync = &solanaSyncRepo{pool: pool}
 	return s
 }
+type ProcessJobSettlementResponse struct {
+	Created     bool
+	Amount      float64
+	RewardDelta float64
+	Owner       string
+}
+func (s *Storage) ProcessJobSettlement(
+	ctx context.Context,
+	monitorID string,
+	runnerPubkey string,
+	tokenCost float64,
+) (*ProcessJobSettlementResponse, error) {
 
-func (s *Storage) ProcessJobSettlement(ctx context.Context, monitorID string, runnerPubkey string, tokenCost float64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to start settlement tx: %w", err)
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
+	// 1. Deduct monitor credits
 	const monitorQ = `
-        UPDATE monitors
-        SET credit_balance_checks = credit_balance_checks - 1,
-            total_spent_tokens = total_spent_tokens + $1
-        WHERE id = $2 AND credit_balance_checks > 0 AND is_active = TRUE AND deleted_at IS NULL`
+		UPDATE monitors
+		SET credit_balance_checks = credit_balance_checks - 1,
+			total_spent_tokens = total_spent_tokens + $1
+		WHERE id = $2
+		  AND credit_balance_checks > 0
+		  AND is_active = TRUE
+		  AND deleted_at IS NULL
+	`
 
-	cmd, err := tx.Exec(ctx, monitorQ, tokenCost, monitorID)
+	res, err := tx.Exec(ctx, monitorQ, tokenCost, monitorID)
 	if err != nil {
-		return fmt.Errorf("settlement monitor update failed: %w", err)
+		return nil, err
 	}
-	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("settlement rejected: monitor %s is inactive or out of credits", monitorID)
+	if res.RowsAffected() == 0 {
+		return nil, fmt.Errorf("monitor rejected")
 	}
 
-	const runnerQ = `
-    SELECT COALESCE(new_balance, 0.0), COALESCE(did_sync, false) 
-    FROM accumulate_runner_reward($1, $2, 10.0000)`
+	// 2. Call SQL reward engine
+	const q = `
+		SELECT created, amount, reward_delta, owner_pubkey
+		FROM create_payout_event_if_threshold($1, $2)
+	`
 
-var newBalance float64
-var didSync bool
+	var created bool
+	var amount float64
+	var rewardDelta float64
+	var owner string
 
-err = tx.QueryRow(ctx, runnerQ, runnerPubkey, tokenCost).Scan(&newBalance, &didSync)
+	err = tx.QueryRow(
+		ctx,
+		q,
+		runnerPubkey,
+		env.Load().RewardThreshold,
+	).Scan(&created, &amount, &rewardDelta, &owner)
+
 	if err != nil {
-		return fmt.Errorf("settlement runner accumulation failed: %w", err)
+		return nil, err
 	}
 
-	return tx.Commit(ctx)
+	// 3. commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	// 4. return response
+	return &ProcessJobSettlementResponse{
+		Created:     created,
+		Amount:      amount,
+		RewardDelta: rewardDelta,
+		Owner:       owner,
+	}, nil
 }
-
 // ── Domain Models ──
 
 type User struct {
@@ -127,6 +164,7 @@ type PingLog struct {
 	Latitude     float64   `json:"latitude"`
 	Longitude    float64   `json:"longitude"`
 	Timestamp    time.Time `json:"timestamp"`
+	TimestampMs   int       `json:"timestamp_ms"`
 }
 
 type SolanaSyncEvent struct {
@@ -180,8 +218,30 @@ type PingLogRepository interface {
 }
 
 type SolanaSyncRepository interface {
-    RecordSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
-    ExistsBySignature(ctx context.Context, txSignature string) (bool, error)
-    // FinalizeSync handles the atomic log-and-debit transaction
-    FinalizeSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
+	// ─────────────────────────────
+	// QUEUE OPERATIONS (worker core)
+	// ─────────────────────────────
+
+	FetchPending(ctx context.Context, limit int) ([]dto.SolanaSyncEvent, error)
+
+	MarkProcessing(ctx context.Context, id string) error
+
+	MarkDone(ctx context.Context, id string, txSignature string) error
+
+	MarkPendingAgain(ctx context.Context, id string) error
+
+	// MarkFailed(ctx context.Context, id string, reason string) error
+
+
+
+	// ─────────────────────────────
+	// LEGACY / OPTIONAL (you had these, kept for safety)
+	// ─────────────────────────────
+
+	RecordSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
+
+	ExistsBySignature(ctx context.Context, txSignature string) (bool, error)
+
+	// Final atomic settlement after successful Solana confirmation
+	FinalizeSync(ctx context.Context, runnerPubkey, txSignature string, amountRaw int64) error
 }

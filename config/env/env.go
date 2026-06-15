@@ -33,6 +33,7 @@ type Config struct {
 	// Solana
 	SolanaRPCURL         string
 	BackendPrivateKeyHex string // 🔑 Now tracking your raw hex string here
+	programID string 
 
 	// gRPC
 	GRPCPort string
@@ -59,6 +60,7 @@ func Load() *Config {
 		JWTSecret:            mustGetEnv("JWT_SECRET"),
 		SolanaRPCURL:         getEnv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"),
 		BackendPrivateKeyHex: mustGetEnv("BACKEND_PRIVATE_KEY_HEX"), // Loaded straight from env
+		programID:             mustGetEnv("PROGRAM_ID"),
 		GRPCPort:             getEnv("GRPC_PORT", "50051"),
 		RewardThreshold:      threshold,
 	}

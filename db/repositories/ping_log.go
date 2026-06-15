@@ -31,7 +31,7 @@ func (r *pingLogRepo) BulkInsert(ctx context.Context, logs []*PingLog) error {
 			l.MonitorID, l.RunnerPubkey,
 			l.DnsUs, l.TcpUs, l.TlsUs, l.TtfbUs, l.TotalUs,
 			l.LatencyMs, l.StatusCode, l.Success, l.ErrorKind,
-			l.GeoRegion, l.Timestamp, l.Latitude, l.Longitude,
+			l.GeoRegion, l.Timestamp, l.Latitude, l.Longitude,l.TimestampMs,
 		}
 	}
 
@@ -41,7 +41,7 @@ func (r *pingLogRepo) BulkInsert(ctx context.Context, logs []*PingLog) error {
 			"monitor_id", "runner_pubkey",
 			"dns_us", "tcp_us", "tls_us", "ttfb_us", "total_us",
 			"latency_ms", "status_code", "success", "error_kind",
-			"geo_region", "timestamp", "latitude", "longitude",
+			"geo_region", "timestamp", "latitude", "longitude","timestamp_ms",
 		},
 		pgx.CopyFromRows(rows),
 	)

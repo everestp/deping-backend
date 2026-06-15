@@ -108,7 +108,7 @@ if err := services.SyncSchedulerState(ctx, rdb, store); err != nil {
 	// ── Workers ────────────────────────────────────────────────────────────
 	workers.StartScheduler(ctx, rdb, pool, rabbitConn, memRegistry, smartScheduler)
 	workers.StartResultProcessor(ctx, pool, rabbitConn, pingLogSvc, rewardSvc)
-	workers.StartSolanaSync(ctx, pool, rabbitCh, cfg)
+	workers.StartSolanaSync(ctx, pool, cfg)
 	workers.StartPartitionCron(ctx, pool)
 	workers.StartSyncCron(ctx, pool, rdb) // Start the periodic sync
 

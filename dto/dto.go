@@ -155,3 +155,5 @@ type NodeItem struct {
 	LastSeenTimestamp         time.Time `json:"last_seen_timestamp"`
 	IsOnline                  bool      `json:"is_online"` // Derived from Redis heartbeat state
 }
+
+

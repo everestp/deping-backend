@@ -170,15 +170,28 @@ func (r *runnerRepo) UpdateHeartbeat(ctx context.Context, nodePubkey string) err
 }
 
 // AccumulateReward safely calculates off-chain balances or signals RabbitMQ loops via a database procedure.
-func (r *runnerRepo) AccumulateReward(ctx context.Context, pubkey string, delta, threshold float64) (*AccumulateResult, error) {
-	const q = `SELECT new_balance, did_sync FROM accumulate_runner_reward($1, $2, $3)`
+func (r *runnerRepo) AccumulateReward(
+	ctx context.Context,
+	pubkey string,
+	delta, threshold float64,
+) (*AccumulateResult, error) {
 
-	res := &AccumulateResult{}
-	err := r.pool.QueryRow(ctx, q, pubkey, delta, threshold).Scan(&res.NewBalance, &res.DidSync)
+	const q = `
+		SELECT created, amount
+		FROM create_payout_event_if_threshold($1, $2)
+	`
+
+	var res AccumulateResult
+
+	err := r.pool.QueryRow(ctx, q, pubkey, threshold).Scan(
+		&res.DidSync,
+		&res.NewBalance,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("runnerRepo.AccumulateReward: %w", err)
 	}
-	return res, nil
+
+	return &res, nil
 }
 
 // SetPendingSync flags a worker as locking to prevent concurrent synchronization races.
