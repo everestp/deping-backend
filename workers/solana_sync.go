@@ -4,28 +4,24 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
+
 	"log"
 	"time"
 
 	"github.com/everestp/depin-backend/config/env"
 	"github.com/everestp/depin-backend/db/repositories"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const decimals = 1_000_000_000
 
-// ─────────────────────────────────────────────
-// WORKER START
-// ─────────────────────────────────────────────
-
 func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, cfg *env.Config) {
-
 	store := repositories.NewStorage(pool)
 	rpcClient := rpc.New(cfg.SolanaRPCURL)
+
+	log.Println("[solana-sync] worker started...")
 
 	go func() {
 		for {
@@ -33,110 +29,107 @@ func StartSolanaSync(ctx context.Context, pool *pgxpool.Pool, cfg *env.Config) {
 			case <-ctx.Done():
 				return
 			default:
-			}
-
-			// 1. Fetch pending events (DB queue)
-			events, err := store.SolanaSync.FetchPending(ctx, 10)
-			if err != nil {
-				log.Println("[solana-sync] fetch error:", err)
-				time.Sleep(2 * time.Second)
-				continue
-			}
-
-			for _, event := range events {
-
-				// 2. Lock event for processing
-				_ = store.SolanaSync.MarkProcessing(ctx, event.ID)
-
-				// 3. Execute Solana transaction
-				sig, err := executeRewardTx(
-					ctx,
-					rpcClient,
-					cfg,
-					event.RunnerPubkey,
-					uint64(event.Amount*decimals),
-				)
-
+				// 1. Fetch pending events
+				events, err := store.SolanaSync.FetchPending(ctx, 10)
 				if err != nil {
-					log.Println("[solana-sync] tx failed:", err)
-
-					_ = store.SolanaSync.MarkPendingAgain(ctx, event.ID)
+					log.Printf("[solana-sync] fetch error: %v", err)
+					time.Sleep(5 * time.Second)
 					continue
 				}
 
-				// 4. Mark success
-				_ = store.SolanaSync.MarkDone(ctx, event.ID, sig)
+				if len(events) == 0 {
+					// No events, just sleep and poll again
+					time.Sleep(5 * time.Second)
+					continue
+				}
 
-				log.Printf("[solana-sync] success: %s -> %s", event.RunnerPubkey, sig)
+				for _, event := range events {
+					log.Printf("[solana-sync] processing event ID: %d for runner: %s", event.ID, event.RunnerPubkey)
+
+					// 2. Lock event
+					if err := store.SolanaSync.MarkProcessing(ctx, event.ID); err != nil {
+						log.Printf("[solana-sync] mark processing error: %v", err)
+						continue
+					}
+
+					// 3. Execute
+					// event.Amount is likely already a float64 from your DB
+sig, err := executeRewardTx(
+    ctx,
+    rpcClient,
+    cfg,
+    event.RunnerPubkey,
+    event.Amount, // Pass the raw float64 directly
+)
+					if err != nil {
+						log.Printf("[solana-sync] tx failed for event %d: %v", event.ID, err)
+						_ = store.SolanaSync.MarkPendingAgain(ctx, event.ID)
+						continue
+					}
+
+					// 4. Mark success
+					if err := store.SolanaSync.MarkDone(ctx, event.ID, sig); err != nil {
+						log.Printf("[solana-sync] mark done error: %v", err)
+					} else {
+						log.Printf("[solana-sync] success: %s -> %s", event.RunnerPubkey, sig)
+					}
+				}
 			}
-
-			time.Sleep(2 * time.Second)
 		}
 	}()
 }
-
-// ─────────────────────────────────────────────
-// SOLANA EXECUTION
-// ─────────────────────────────────────────────
 
 func executeRewardTx(
     ctx context.Context,
     client *rpc.Client,
     cfg *env.Config,
     ownerPubkey string,
-    amountRaw uint64,
+    amountHumanReadable float64,
 ) (string, error) {
 
     backendSigner, err := cfg.GetBackendPrivateKey()
     if err != nil {
-        return "", fmt.Errorf("invalid backend signer: %w", err)
+        return "", err
     }
 
     programID := solana.MustPublicKeyFromBase58("DVicVozhh4y38dA6iCzfPp2c4xj5Q29mJq6HgF5Eufiz")
     nodePubkey := solana.MustPublicKeyFromBase58(ownerPubkey)
+    emailHash := sha256.Sum256([]byte("3verestp@gmail.com"))
 
-    // Derive the PDA using the same seeds as your Rust init_node function
+    nodePDA, _, err := solana.FindProgramAddress(
+        [][]byte{[]byte("node"), nodePubkey.Bytes(), emailHash[:]},
+        programID,
+    )
+    if err != nil {
+        return "", err
+    }
 
-emailHash := sha256.Sum256([]byte(ownerPubkey))
+    // 1. Correct Discriminator (Anchor uses the first 8 bytes of SHA256("global:addReward"))
+    // Using the bytes derived from your IDL
+    discriminator := [8]byte{247, 182, 107, 15, 128, 48, 17, 172}
 
-// Change the variable names: the second return value is the PublicKey
-nodePDA, bump, err := solana.FindProgramAddress(
-    [][]byte{
-        []byte("node"),
-        nodePubkey.Bytes(),
-        emailHash[:],
-    },
-    programID,
-)
-if err != nil {
-    return "", fmt.Errorf("failed to find PDA: %w", err)
-}
+    // 2. CORRECT CALCULATION: amount * 1,000,000,000
+    // Cast to uint64 after multiplying by the decimal scale
+    amountRaw := uint64(amountHumanReadable * float64(decimals))
 
-// Now nodePDA is of type solana.PublicKey and can be used in NewAccountMeta
-fmt.Printf("Derived PDA: %s (bump: %d)\n", nodePDA, bump)
-    // Anchor Instruction Discriminator for "add_reward"
-    // (Ensure this matches the one generated by your IDL)
-    discriminator := [8]byte{108, 14, 219, 10, 116, 2, 237, 204}
     data := make([]byte, 16)
     copy(data[0:8], discriminator[:])
     binary.LittleEndian.PutUint64(data[8:16], amountRaw)
 
-    // CORRECTED: Account meta order and flags to match AddReward struct
-   instruction := solana.NewInstruction(
-    programID,
-    solana.AccountMetaSlice{
-        // nodePDA: isSigner = false, isWritable = true
-        solana.NewAccountMeta(nodePDA, false, true),
-        
-        // backendSigner: isSigner = true, isWritable = false
-        solana.NewAccountMeta(backendSigner.PublicKey(), true, false),
-    },
-    data,
-)
+    // 3. Instruction
+    instruction := solana.NewInstruction(
+        programID,
+        solana.AccountMetaSlice{
+            {PublicKey: nodePDA, IsSigner: false, IsWritable: true},
+            {PublicKey: backendSigner.PublicKey(), IsSigner: true, IsWritable: false},
+        },
+        data,
+    )
 
+    // 4. Send
     recent, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
     if err != nil {
-        return "", fmt.Errorf("blockhash error: %w", err)
+        return "", err
     }
 
     tx, err := solana.NewTransaction(
@@ -145,7 +138,7 @@ fmt.Printf("Derived PDA: %s (bump: %d)\n", nodePDA, bump)
         solana.TransactionPayer(backendSigner.PublicKey()),
     )
     if err != nil {
-        return "", fmt.Errorf("tx build error: %w", err)
+        return "", err
     }
 
     _, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
@@ -155,14 +148,13 @@ fmt.Printf("Derived PDA: %s (bump: %d)\n", nodePDA, bump)
         return nil
     })
     if err != nil {
-        return "", fmt.Errorf("sign error: %w", err)
+        return "", err
     }
 
     sig, err := client.SendTransaction(ctx, tx)
     if err != nil {
-        return "", fmt.Errorf("send error: %w", err)
+        return "", err
     }
 
-    // ... (confirmation loop remains the same)
     return sig.String(), nil
 }

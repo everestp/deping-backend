@@ -58,7 +58,7 @@ func Load() *Config {
 		RedisDB:              redisDB,
 		RabbitMQURL:          mustGetEnv("RABBITMQ_URL"),
 		JWTSecret:            mustGetEnv("JWT_SECRET"),
-		SolanaRPCURL:         getEnv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"),
+		SolanaRPCURL:         mustGetEnv("SOLANA_RPC_URL"),
 		BackendPrivateKeyHex: mustGetEnv("BACKEND_PRIVATE_KEY_HEX"), // Loaded straight from env
 		programID:             mustGetEnv("PROGRAM_ID"),
 		GRPCPort:             getEnv("GRPC_PORT", "50051"),
