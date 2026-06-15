@@ -86,7 +86,6 @@ func executeRewardTx(
     ownerPubkey string,
     amountHumanReadable float64,
 ) (string, error) {
-
     backendSigner, err := cfg.GetBackendPrivateKey()
     if err != nil {
         return "", err
@@ -104,19 +103,22 @@ func executeRewardTx(
         return "", err
     }
 
-    // 1. Correct Discriminator (Anchor uses the first 8 bytes of SHA256("global:addReward"))
-    // Using the bytes derived from your IDL
-    discriminator := [8]byte{247, 182, 107, 15, 128, 48, 17, 172}
+    // 1. DYNAMIC DISCRIMINATOR GENERATION
+    // Use "global:add_reward" (snake_case) or "global:addReward" (camelCase)
+    // Most Rust programs with the function name `add_reward` expect "global:add_reward"
+    hashString := "global:add_reward"
+    hash := sha256.Sum256([]byte(hashString))
+    discriminator := hash[:8]
 
-    // 2. CORRECT CALCULATION: amount * 1,000,000,000
-    // Cast to uint64 after multiplying by the decimal scale
+    // 2. AMOUNT CONVERSION
     amountRaw := uint64(amountHumanReadable * float64(decimals))
 
+    // 3. PACK DATA
     data := make([]byte, 16)
-    copy(data[0:8], discriminator[:])
+    copy(data[0:8], discriminator)
     binary.LittleEndian.PutUint64(data[8:16], amountRaw)
 
-    // 3. Instruction
+    // 4. INSTRUCTION
     instruction := solana.NewInstruction(
         programID,
         solana.AccountMetaSlice{
@@ -126,7 +128,7 @@ func executeRewardTx(
         data,
     )
 
-    // 4. Send
+    // 5. BUILD & SEND
     recent, err := client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
     if err != nil {
         return "", err
