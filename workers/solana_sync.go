@@ -93,7 +93,7 @@ func executeRewardTx(
 
     programID := solana.MustPublicKeyFromBase58("DVicVozhh4y38dA6iCzfPp2c4xj5Q29mJq6HgF5Eufiz")
     nodePubkey := solana.MustPublicKeyFromBase58(ownerPubkey)
-    emailHash := sha256.Sum256([]byte("3verestp@gmail.com"))
+    emailHash := sha256.Sum256([]byte("test1@gmail.com"))
 
     nodePDA, _, err := solana.FindProgramAddress(
         [][]byte{[]byte("node"), nodePubkey.Bytes(), emailHash[:]},
