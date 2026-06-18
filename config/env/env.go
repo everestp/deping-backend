@@ -27,6 +27,7 @@ type Config struct {
 
 	// RabbitMQ
 	RabbitMQURL string
+	CloudRabbitMQURL string
 
 	// JWT
 	JWTSecret string
@@ -59,6 +60,7 @@ func Load() *Config {
 		RedisPassword:        getEnv("REDIS_PASSWORD", ""),
 		RedisDB:              redisDB,
 		RabbitMQURL:          mustGetEnv("RABBITMQ_URL"),
+		CloudRabbitMQURL:          mustGetEnv("CLOUD_RABBITMQ_URL"),
 		JWTSecret:            mustGetEnv("JWT_SECRET"),
 		SolanaRPCURL:         mustGetEnv("SOLANA_RPC_URL"),
 		BackendPrivateKeyHex: mustGetEnv("BACKEND_PRIVATE_KEY_HEX"), // Loaded straight from env

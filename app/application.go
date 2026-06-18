@@ -65,7 +65,7 @@ if err := rdb.Ping(ctx).Err(); err != nil {
 
 	
 	// ── RabbitMQ ───────────────────────────────────────────────────────────
-	rabbitConn, err := amqp.Dial(cfg.RabbitMQURL)
+	rabbitConn, err := amqp.Dial(cfg.CloudRabbitMQURL)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq dial: %w", err)
 	}
