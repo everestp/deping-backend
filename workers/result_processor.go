@@ -98,7 +98,7 @@ func runConsumeLoop(
 				_ = msg.Nack(false, true)
 				continue
 			}
-	log.Printf("Deos we reach here                        =======================================================================================")
+
 			// ACK only after success
 			_ = msg.Ack(false)
 		}
