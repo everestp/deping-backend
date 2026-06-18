@@ -68,8 +68,9 @@ func (s *pingLogService) ProcessPacket(ctx context.Context, packet *ResultPacket
 		resp, err := s.store.ProcessJobSettlement(
 			ctx,
 			r.MonitorID,
+			
 			packet.RunnerPubkey,
-			0,
+			0.010,
 		)
 
 		if err != nil {

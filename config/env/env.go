@@ -21,6 +21,7 @@ type Config struct {
 
 	// Redis
 	RedisAddr     string
+	UptashRedisAddr    string
 	RedisPassword string
 	RedisDB       int
 
@@ -54,6 +55,7 @@ func Load() *Config {
 		Port:                 getEnv("PORT", "8080"),
 		DatabaseURL:          mustGetEnv("DATABASE_URL"),
 		RedisAddr:            getEnv("REDIS_ADDR", "localhost:6379"),
+		UptashRedisAddr:     mustGetEnv("UPTASH_REDIS_ADDRESS"),
 		RedisPassword:        getEnv("REDIS_PASSWORD", ""),
 		RedisDB:              redisDB,
 		RabbitMQURL:          mustGetEnv("RABBITMQ_URL"),
@@ -62,6 +64,7 @@ func Load() *Config {
 		BackendPrivateKeyHex: mustGetEnv("BACKEND_PRIVATE_KEY_HEX"), // Loaded straight from env
 		programID:             mustGetEnv("PROGRAM_ID"),
 		GRPCPort:             getEnv("GRPC_PORT", "50051"),
+		
 		RewardThreshold:      threshold,
 	}
 

@@ -143,7 +143,6 @@ func toMonitorResponse(m *repositories.Monitor) *dto.MonitorResponse {
 		ID:                   m.ID,
 		TargetURL:            m.TargetURL,
 		IntervalSeconds:      m.CheckIntervalSeconds,
-		CreditBalanceChecks:  m.CreditBalanceChecks,
 		TotalSpentTokens:     m.TotalSpentTokens,
 		IsActive:             m.IsActive,
 	}

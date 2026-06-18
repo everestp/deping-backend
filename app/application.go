@@ -43,15 +43,27 @@ func New(cfg *env.Config) (*Application, error) {
 		return nil, fmt.Errorf("db pool: %w", err)
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-	})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("redis ping: %w", err)
-	}
+	// rdb := redis.NewClient(&redis.Options{
+	// 	Addr:     cfg.RedisAddr,
+	// 	Password: cfg.RedisPassword,
+	// 	DB:       cfg.RedisDB,
+	// })
+	// if err := rdb.Ping(ctx).Err(); err != nil {
+	// 	return nil, fmt.Errorf("redis ping: %w", err)
+	// }
+opt, err := redis.ParseURL(cfg.UptashRedisAddr)
+if err != nil {
+	return nil, fmt.Errorf("parse redis url: %w", err)
+}
 
+rdb := redis.NewClient(opt)
+
+if err := rdb.Ping(ctx).Err(); err != nil {
+	return nil, fmt.Errorf("redis ping: %w", err)
+}
+
+
+	
 	// ── RabbitMQ ───────────────────────────────────────────────────────────
 	rabbitConn, err := amqp.Dial(cfg.RabbitMQURL)
 	if err != nil {

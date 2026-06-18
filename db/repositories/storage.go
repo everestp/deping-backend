@@ -35,91 +35,83 @@ type ProcessJobSettlementResponse struct {
 	Owner       string
 }
 func (s *Storage) ProcessJobSettlement(
-	ctx context.Context,
-	monitorID string,
-	runnerPubkey string,
-	tokenCost float64,
+    ctx context.Context,
+    monitorID string,
+    runnerPubkey string,
+    tokenCost float64,
 ) (*ProcessJobSettlementResponse, error) {
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
+    tx, err := s.pool.Begin(ctx)
+    if err != nil {
+        return nil, err
+    }
+    defer tx.Rollback(ctx)
 
-	// 1. Deduct monitor credits
-	const monitorQ = `
-		UPDATE monitors
-		SET credit_balance_checks = credit_balance_checks - 1,
-			total_spent_tokens = total_spent_tokens + $1
-		WHERE id = $2
-		  AND credit_balance_checks > 0
-		  AND is_active = TRUE
-		  AND deleted_at IS NULL
-	`
+    // 1. Deduct 1 credit from the USER who owns the monitor
+    const deductQ = `
+        UPDATE users 
+        SET credit_balance = credit_balance - 1
+        WHERE id = (SELECT owner_id FROM monitors WHERE id = $1)
+          AND credit_balance > 0
+        RETURNING credit_balance;
+    `
 
-	res, err := tx.Exec(ctx, monitorQ, tokenCost, monitorID)
-	if err != nil {
-		return nil, err
-	}
-	if res.RowsAffected() == 0 {
-		return nil, fmt.Errorf("monitor rejected")
-	}
+    var newBalance int64
+    err = tx.QueryRow(ctx, deductQ, monitorID).Scan(&newBalance)
+    if err != nil {
+        // If no rows updated, either monitor doesn't exist OR user has 0 credits
+        return nil, fmt.Errorf("insufficient credits or monitor not found")
+    }
 
-	// 2. Call SQL reward engine
-	const q = `
-		SELECT created, amount, reward_delta, node_pubkey
-		FROM create_payout_event_if_threshold($1, $2)
-	`
+    // 2. Update usage metrics on the monitor
+    const updateMonitorQ = `
+        UPDATE monitors 
+        SET total_spent_tokens = total_spent_tokens + $1
+        WHERE id = $2
+    `
+    _, err = tx.Exec(ctx, updateMonitorQ, tokenCost, monitorID)
+    if err != nil {
+        return nil, err
+    }
 
-	var created bool
-	var amount float64
-	var rewardDelta float64
-	var owner string
+    // 3. Reward Engine
+    const q = `
+        SELECT created, amount, reward_delta, node_pubkey
+        FROM create_payout_event_if_threshold($1, $2)
+    `
+    var res ProcessJobSettlementResponse
+    err = tx.QueryRow(ctx, q, runnerPubkey, env.Load().RewardThreshold).Scan(
+        &res.Created, &res.Amount, &res.RewardDelta, &res.Owner,
+    )
+    if err != nil {
+        return nil, err
+    }
 
-	err = tx.QueryRow(
-		ctx,
-		q,
-		runnerPubkey,
-		env.Load().RewardThreshold,
-	).Scan(&created, &amount, &rewardDelta, &owner)
+    if err := tx.Commit(ctx); err != nil {
+        return nil, err
+    }
 
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	// 4. return response
-	return &ProcessJobSettlementResponse{
-		Created:     created,
-		Amount:      amount,
-		RewardDelta: rewardDelta,
-		Owner:       owner,
-	}, nil
+    return &res, nil
 }
 // ── Domain Models ──
 
 type User struct {
-	ID           int       `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	WalletPubkey string    `json:"wallet_pubkey"`
-	CreatedAt    time.Time `json:"created_at"`
+    ID            int       `json:"id"`
+    Email         string    `json:"email"`
+    PasswordHash  string    `json:"-"`
+    WalletPubkey  string    `json:"wallet_pubkey"`
+    CreditBalance int64     `json:"credit_balance"` // Added
+    CreatedAt     time.Time `json:"created_at"`
 }
 
 type Monitor struct {
-	ID                   string    `json:"id"`
-	OwnerID              int       `json:"owner_id"`
-	TargetURL            string    `json:"target_url"`
-	CheckIntervalSeconds int       `json:"check_interval_seconds"`
-	CreditBalanceChecks  int64     `json:"credit_balance_checks"`
-	TotalSpentTokens     float64   `json:"total_spent_tokens"`
-	IsActive             bool      `json:"is_active"`
-	CreatedAt            time.Time `json:"created_at"`
+    ID                   string    `json:"id"`
+    OwnerID              int       `json:"owner_id"`
+    TargetURL            string    `json:"target_url"`
+    CheckIntervalSeconds int       `json:"check_interval_seconds"`
+    TotalSpentTokens     float64   `json:"total_spent_tokens"`
+    IsActive             bool      `json:"is_active"`
+    CreatedAt            time.Time `json:"created_at"`
 }
 
 type RunnerNode struct {
